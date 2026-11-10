@@ -54,6 +54,7 @@ export default class ConfigStore extends Service {
           companionServerCORSWildcardEnabled: true,
           discordPresenceEnabled: false,
           discordPresenceStatusDisplayType: 1,
+          discordPresencePauseTimeoutSeconds: 30,
           lastFMEnabled: false,
           enhancedMediaServiceEnabled: true
         },

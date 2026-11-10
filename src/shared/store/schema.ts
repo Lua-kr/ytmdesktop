@@ -36,6 +36,7 @@ export type StoreSchema = {
     companionServerCORSWildcardEnabled: boolean;
     discordPresenceEnabled: boolean;
     discordPresenceStatusDisplayType: number;
+    discordPresencePauseTimeoutSeconds: number;
     lastFMEnabled: boolean;
     enhancedMediaServiceEnabled: boolean;
   };

@@ -60,6 +60,8 @@ export default class DiscordPresence extends Integration {
   private ready = false;
   private activityDebounceTimeout: NodeJS.Timeout | string | number | undefined = undefined;
   private pauseTimeout: NodeJS.Timeout | string | number | undefined = undefined;
+  private pauseStartedAt: number | null = null;
+  private pauseExpired = false;
   private connectionRetryTimeout: NodeJS.Timeout | string | number | undefined = undefined;
   private stateCallback: ((event: PlayerState) => void) | null = null;
 
@@ -69,12 +71,48 @@ export default class DiscordPresence extends Integration {
 
   private connectionRetries: number = 0;
 
+  private getPauseTimeoutMs(): number {
+    const seconds = this.getService(ConfigStore).get("integrations.discordPresencePauseTimeoutSeconds");
+    // Guard against invalid values in an existing or manually edited config.
+    return (Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 3600 ? seconds : 30) * 1000;
+  }
+
+  private schedulePauseClear(): void {
+    clearTimeout(this.pauseTimeout);
+    this.pauseTimeout = undefined;
+    if (!this.ready || this.videoState !== VideoState.Paused || this.pauseStartedAt === null) return;
+
+    const remaining = this.pauseStartedAt + this.getPauseTimeoutMs() - Date.now();
+    if (remaining <= 0) {
+      if (!this.pauseExpired) {
+        this.pauseExpired = true;
+        clearTimeout(this.activityDebounceTimeout);
+        this.activityDebounceTimeout = undefined;
+        this.discordClient?.clearActivity();
+      }
+      return;
+    }
+
+    if (this.pauseExpired) {
+      // A longer timeout may restore an activity that has already expired.
+      this.pauseExpired = false;
+      this.updateActivity();
+    }
+
+    this.pauseTimeout = setTimeout(() => {
+      this.pauseTimeout = undefined;
+      this.schedulePauseClear();
+    }, remaining);
+  }
+
   private updateActivity() {
     if (this.activityDebounceTimeout) return;
     this.activityDebounceTimeout = setTimeout(() => {
-      if (!this.videoDetails) {
-        this.discordClient?.clearActivity();
-        return;
+      this.activityDebounceTimeout = undefined;
+      if (!this.ready || !this.videoDetails) return;
+      if (this.videoState === VideoState.Paused) {
+        this.schedulePauseClear();
+        if (this.pauseExpired) return;
       }
       const { title, author, album, id, thumbnails, durationSeconds, channelId, albumId } = this.videoDetails;
       const thumbnail = getHighestResThumbnail(thumbnails);
@@ -109,7 +147,6 @@ export default class DiscordPresence extends Integration {
         },
         instance: false
       });
-      this.activityDebounceTimeout = undefined;
     }, 1000);
   }
 
@@ -118,30 +155,44 @@ export default class DiscordPresence extends Integration {
 
     const { videoDetails, videoProgress, trackState, hasFullMetadata } = state;
     if (!videoDetails) {
+      clearTimeout(this.activityDebounceTimeout);
+      clearTimeout(this.pauseTimeout);
+      this.activityDebounceTimeout = this.pauseTimeout = undefined;
+      this.pauseStartedAt = null;
+      this.pauseExpired = false;
+      this.videoDetails = null;
+      this.videoState = trackState;
       this.discordClient?.clearActivity();
       return;
     }
-    const oldState = this.videoState ?? null;
+    const oldState = this.videoState;
     const oldId = this.videoDetails?.id ?? null;
-    const oldProgress = this.progress ?? null;
+    const oldProgress = this.progress;
     this.videoState = trackState;
     this.videoDetails = videoDetails;
     this.progress = Math.floor(videoProgress);
+
+    if (trackState === VideoState.Paused) {
+      if (oldState !== VideoState.Paused || this.pauseStartedAt === null) {
+        this.pauseStartedAt = Date.now();
+        this.pauseExpired = false;
+      }
+      // State updates during pause must not restart the countdown.
+      this.schedulePauseClear();
+    } else {
+      clearTimeout(this.pauseTimeout);
+      this.pauseTimeout = undefined;
+      this.pauseStartedAt = null;
+      this.pauseExpired = false;
+    }
+
     if (
+      !this.pauseExpired &&
       hasFullMetadata &&
       (oldState !== this.videoState || oldId !== this.videoDetails.id || Math.abs(this.progress - oldProgress) > 1 || oldProgress > this.progress)
     ) {
       this.updateActivity();
     }
-
-    clearTimeout(this.pauseTimeout);
-    this.pauseTimeout = undefined;
-    if (state.trackState == VideoState.Playing) return;
-    this.pauseTimeout = setTimeout(() => {
-      if (!this.discordClient && !this.ready) return;
-      this.discordClient?.clearActivity();
-      this.pauseTimeout = undefined;
-    }, 30 * 1000);
   }
 
   private retryDiscordConnection() {
@@ -162,7 +213,13 @@ export default class DiscordPresence extends Integration {
     }, 5 * 1000);
   }
 
-  public onSetup() {}
+  public onSetup() {
+    this.getService(ConfigStore).onDidChange("integrations.discordPresencePauseTimeoutSeconds", () => {
+      if (this.isEnabled && this.ready && this.videoState === VideoState.Paused) {
+        this.schedulePauseClear();
+      }
+    });
+  }
 
   public onEnabled(): void {
     if (this.discordClient) return;
@@ -173,10 +230,16 @@ export default class DiscordPresence extends Integration {
       this.connectionRetries = 0;
       const memoryStore = this.getService(MemoryStore<MemoryStoreSchema>);
       memoryStore.set("discordPresenceConnectionFailed", false);
+      // Reconcile a pause that started before (re)connection.
+      this.playerStateChanged(this.getService(PlayerStateStore).getState());
     });
     this.discordClient.on("close", () => {
       log.info("Discord connection closed");
       this.ready = false;
+      clearTimeout(this.pauseTimeout);
+      this.pauseTimeout = undefined;
+      clearTimeout(this.activityDebounceTimeout);
+      this.activityDebounceTimeout = undefined;
       this.retryDiscordConnection();
     });
     this.discordClient.connect().catch(() => this.retryDiscordConnection());
@@ -197,6 +260,10 @@ export default class DiscordPresence extends Integration {
     clearTimeout(this.pauseTimeout);
     clearTimeout(this.connectionRetryTimeout);
     this.activityDebounceTimeout = this.pauseTimeout = this.connectionRetryTimeout = undefined;
+    this.pauseStartedAt = null;
+    this.pauseExpired = false;
+    this.videoState = VideoState.Unknown;
+    this.videoDetails = null;
 
     if (this.stateCallback) {
       const playerStateStore = this.getService(PlayerStateStore);

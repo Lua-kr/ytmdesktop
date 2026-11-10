@@ -63,6 +63,7 @@ const companionServerAuthTokens = ref<AuthToken[]>(
 const companionServerCORSWildcardEnabled = ref<boolean>(integrations.companionServerCORSWildcardEnabled);
 const discordPresenceEnabled = ref<boolean>(integrations.discordPresenceEnabled);
 const discordPresenceStatusDisplayType = ref<number>(integrations.discordPresenceStatusDisplayType ?? 1);
+const discordPresencePauseTimeoutSeconds = ref<number>(integrations.discordPresencePauseTimeoutSeconds ?? 30);
 const lastFMEnabled = ref<boolean>(integrations.lastFMEnabled);
 const enhancedMediaServiceEnabled = ref<boolean>(integrations.enhancedMediaServiceEnabled);
 
@@ -106,6 +107,7 @@ store.onDidAnyChange(async newState => {
   companionServerCORSWildcardEnabled.value = newState.integrations.companionServerCORSWildcardEnabled;
   discordPresenceEnabled.value = newState.integrations.discordPresenceEnabled;
   discordPresenceStatusDisplayType.value = newState.integrations.discordPresenceStatusDisplayType ?? 1;
+  discordPresencePauseTimeoutSeconds.value = newState.integrations.discordPresencePauseTimeoutSeconds ?? 30;
   lastFMEnabled.value = newState.integrations.lastFMEnabled;
   lastFMSessionKey.value = newState.lastfm.sessionKey;
   scrobblePercent.value = newState.lastfm.scrobblePercent;
@@ -227,6 +229,17 @@ async function settingChangedFile(event: Event) {
   store.set(setting, target.files.length > 0 ? window.ytmd.getTrueFilePath(target.files[0]) : null);
 
   target.value = null;
+}
+
+function discordPauseTimeoutChanged(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const seconds = Number(input.value);
+  if (input.value.trim() === "" || !Number.isSafeInteger(seconds) || seconds < 0 || seconds > 3600) {
+    input.value = String(discordPresencePauseTimeoutSeconds.value);
+    return;
+  }
+  discordPresencePauseTimeoutSeconds.value = seconds;
+  store.set("integrations.discordPresencePauseTimeoutSeconds", seconds);
 }
 
 async function restartDiscordPresence() {
@@ -551,6 +564,27 @@ function stepLastFMAuth() {
             name="Pick status display"
             @change="settingsChanged"
           />
+          <YTMDSetting
+            v-if="discordPresenceEnabled"
+            type="custom"
+            indented
+            name="Clear Discord status after pausing"
+            description="Seconds after pause; 0 clears immediately (max 3600)."
+          >
+            <div class="discord-pause-timeout-control">
+              <input
+                type="number"
+                class="discord-pause-timeout-input"
+                :value="discordPresencePauseTimeoutSeconds"
+                min="0"
+                max="3600"
+                step="1"
+                aria-label="Discord pause timeout in seconds"
+                @change="discordPauseTimeoutChanged"
+              >
+              <span>sec</span>
+            </div>
+          </YTMDSetting>
           <div
             v-if="discordPresenceEnabled && discordPresenceConnectionFailed"
             class="setting indented"
@@ -1150,6 +1184,23 @@ function stepLastFMAuth() {
 .discord-failure {
   margin: 0;
   color: #969696;
+}
+
+.discord-pause-timeout-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.discord-pause-timeout-input {
+  width: 72px;
+  box-sizing: border-box;
+  border: 1px solid #414141;
+  border-radius: 4px;
+  padding: 6px 8px;
+  background-color: #212121;
+  color: inherit;
 }
 
 button {
