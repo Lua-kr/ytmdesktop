@@ -64,6 +64,7 @@ const companionServerCORSWildcardEnabled = ref<boolean>(integrations.companionSe
 const discordPresenceEnabled = ref<boolean>(integrations.discordPresenceEnabled);
 const discordPresenceStatusDisplayType = ref<number>(integrations.discordPresenceStatusDisplayType ?? 1);
 const discordPresencePauseTimeoutSeconds = ref<number>(integrations.discordPresencePauseTimeoutSeconds ?? 30);
+const discordPresenceFreezePlaybackOnPause = ref<boolean>(integrations.discordPresenceFreezePlaybackOnPause ?? true);
 const lastFMEnabled = ref<boolean>(integrations.lastFMEnabled);
 const enhancedMediaServiceEnabled = ref<boolean>(integrations.enhancedMediaServiceEnabled);
 
@@ -108,6 +109,7 @@ store.onDidAnyChange(async newState => {
   discordPresenceEnabled.value = newState.integrations.discordPresenceEnabled;
   discordPresenceStatusDisplayType.value = newState.integrations.discordPresenceStatusDisplayType ?? 1;
   discordPresencePauseTimeoutSeconds.value = newState.integrations.discordPresencePauseTimeoutSeconds ?? 30;
+  discordPresenceFreezePlaybackOnPause.value = newState.integrations.discordPresenceFreezePlaybackOnPause ?? true;
   lastFMEnabled.value = newState.integrations.lastFMEnabled;
   lastFMSessionKey.value = newState.lastfm.sessionKey;
   scrobblePercent.value = newState.lastfm.scrobblePercent;
@@ -197,6 +199,7 @@ async function settingsChanged() {
   store.set("integrations.companionServerCORSWildcardEnabled", companionServerCORSWildcardEnabled.value);
   store.set("integrations.discordPresenceEnabled", discordPresenceEnabled.value);
   store.set("integrations.discordPresenceStatusDisplayType", discordPresenceStatusDisplayType.value);
+  store.set("integrations.discordPresenceFreezePlaybackOnPause", discordPresenceFreezePlaybackOnPause.value);
   store.set("integrations.lastFMEnabled", lastFMEnabled.value);
   store.set("lastfm.scrobblePercent", scrobblePercent.value);
   store.set("integrations.enhancedMediaServiceEnabled", enhancedMediaServiceEnabled.value);
@@ -585,6 +588,15 @@ function stepLastFMAuth() {
               <span>sec</span>
             </div>
           </YTMDSetting>
+          <YTMDSetting
+            v-if="discordPresenceEnabled"
+            v-model="discordPresenceFreezePlaybackOnPause"
+            type="checkbox"
+            indented
+            name="Freeze playback progress while paused"
+            description="Keep song progress near the paused position. Discord may briefly animate the progress bar between updates."
+            @change="settingsChanged"
+          />
           <div
             v-if="discordPresenceEnabled && discordPresenceConnectionFailed"
             class="setting indented"

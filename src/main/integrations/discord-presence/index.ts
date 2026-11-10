@@ -62,6 +62,8 @@ export default class DiscordPresence extends Integration {
   private pauseTimeout: NodeJS.Timeout | string | number | undefined = undefined;
   private pauseStartedAt: number | null = null;
   private pauseExpired = false;
+  private pausedPlaybackPosition: number | null = null;
+  private pauseProgressRefreshTimeout: NodeJS.Timeout | undefined = undefined;
   private connectionRetryTimeout: NodeJS.Timeout | string | number | undefined = undefined;
   private stateCallback: ((event: PlayerState) => void) | null = null;
 
@@ -77,6 +79,42 @@ export default class DiscordPresence extends Integration {
     return (Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 3600 ? seconds : 30) * 1000;
   }
 
+  private shouldFreezePlaybackOnPause(): boolean {
+    return this.getService(ConfigStore).get("integrations.discordPresenceFreezePlaybackOnPause") !== false;
+  }
+
+  private stopPauseProgressRefresh(): void {
+    clearTimeout(this.pauseProgressRefreshTimeout);
+    this.pauseProgressRefreshTimeout = undefined;
+  }
+
+  private schedulePauseProgressRefresh(): void {
+    this.stopPauseProgressRefresh();
+    if (
+      !this.ready ||
+      this.pauseExpired ||
+      this.videoState !== VideoState.Paused ||
+      this.pausedPlaybackPosition === null ||
+      !this.shouldFreezePlaybackOnPause() ||
+      !this.videoDetails ||
+      !Number.isFinite(this.videoDetails.durationSeconds) ||
+      this.videoDetails.durationSeconds <= 0
+    ) return;
+
+    // Discord RPC has no pause flag. Re-anchor the same playback position at a modest interval.
+    this.pauseProgressRefreshTimeout = setTimeout(() => {
+      this.pauseProgressRefreshTimeout = undefined;
+      if (
+        this.ready &&
+        !this.pauseExpired &&
+        this.videoState === VideoState.Paused &&
+        this.shouldFreezePlaybackOnPause()
+      ) {
+        this.updateActivity();
+      }
+    }, 10_000);
+  }
+
   private schedulePauseClear(): void {
     clearTimeout(this.pauseTimeout);
     this.pauseTimeout = undefined;
@@ -86,6 +124,7 @@ export default class DiscordPresence extends Integration {
     if (remaining <= 0) {
       if (!this.pauseExpired) {
         this.pauseExpired = true;
+        this.stopPauseProgressRefresh();
         clearTimeout(this.activityDebounceTimeout);
         this.activityDebounceTimeout = undefined;
         this.discordClient?.clearActivity();
@@ -127,6 +166,14 @@ export default class DiscordPresence extends Integration {
       const stateText =
         displayPreference === 3 ? `${author} - ${title}` :
         displayPreference === 4 ? `${title} - ${author}` : author;
+      const now = Date.now();
+      const frozenTimeline =
+        this.videoState === VideoState.Paused &&
+        this.shouldFreezePlaybackOnPause() &&
+        this.pausedPlaybackPosition !== null &&
+        Number.isFinite(durationSeconds) &&
+        durationSeconds > 0;
+      const pausedPosition = Math.max(0, Math.min(durationSeconds, this.pausedPlaybackPosition ?? this.progress));
       this.discordClient?.setActivity({
         type: DiscordActivityType.Listening,
         status_display_type: statusDisplayType,
@@ -135,8 +182,8 @@ export default class DiscordPresence extends Integration {
         state: stringLimit(stateText, 128, 2),
         state_url: combinedStatus ? undefined : `https://music.youtube.com/channel/${channelId}`,
         timestamps: {
-          start: this.videoState === VideoState.Playing ? Date.now() - this.progress * 1000 : undefined,
-          end: this.videoState === VideoState.Playing ? Date.now() + (durationSeconds - this.progress) * 1000 : undefined
+          start: this.videoState === VideoState.Playing ? now - this.progress * 1000 : frozenTimeline ? now - pausedPosition * 1000 : undefined,
+          end: this.videoState === VideoState.Playing ? now + (durationSeconds - this.progress) * 1000 : frozenTimeline ? now + (durationSeconds - pausedPosition) * 1000 : undefined
         },
         assets: {
           large_image: (thumbnail?.length ?? 0) <= 256 ? thumbnail : "ytmd-logo",
@@ -147,6 +194,7 @@ export default class DiscordPresence extends Integration {
         },
         instance: false
       });
+      this.schedulePauseProgressRefresh();
     }, 1000);
   }
 
@@ -157,9 +205,11 @@ export default class DiscordPresence extends Integration {
     if (!videoDetails) {
       clearTimeout(this.activityDebounceTimeout);
       clearTimeout(this.pauseTimeout);
+      this.stopPauseProgressRefresh();
       this.activityDebounceTimeout = this.pauseTimeout = undefined;
       this.pauseStartedAt = null;
       this.pauseExpired = false;
+      this.pausedPlaybackPosition = null;
       this.videoDetails = null;
       this.videoState = trackState;
       this.discordClient?.clearActivity();
@@ -172,24 +222,32 @@ export default class DiscordPresence extends Integration {
     this.videoDetails = videoDetails;
     this.progress = Math.floor(videoProgress);
 
+    let pausedPositionChanged = false;
     if (trackState === VideoState.Paused) {
-      if (oldState !== VideoState.Paused || this.pauseStartedAt === null) {
+      if (oldState !== VideoState.Paused || this.pauseStartedAt === null || oldId !== this.videoDetails.id) {
         this.pauseStartedAt = Date.now();
         this.pauseExpired = false;
+        this.pausedPlaybackPosition = this.progress;
+      } else if (this.pausedPlaybackPosition !== null && Math.abs(this.progress - this.pausedPlaybackPosition) > 1) {
+        // A seek while paused should change the frozen position, not restart the pause deadline.
+        this.pausedPlaybackPosition = this.progress;
+        pausedPositionChanged = true;
       }
       // State updates during pause must not restart the countdown.
       this.schedulePauseClear();
     } else {
       clearTimeout(this.pauseTimeout);
       this.pauseTimeout = undefined;
+      this.stopPauseProgressRefresh();
       this.pauseStartedAt = null;
       this.pauseExpired = false;
+      this.pausedPlaybackPosition = null;
     }
 
     if (
       !this.pauseExpired &&
       hasFullMetadata &&
-      (oldState !== this.videoState || oldId !== this.videoDetails.id || Math.abs(this.progress - oldProgress) > 1 || oldProgress > this.progress)
+      (oldState !== this.videoState || oldId !== this.videoDetails.id || Math.abs(this.progress - oldProgress) > 1 || oldProgress > this.progress || pausedPositionChanged)
     ) {
       this.updateActivity();
     }
@@ -219,6 +277,12 @@ export default class DiscordPresence extends Integration {
         this.schedulePauseClear();
       }
     });
+    this.getService(ConfigStore).onDidChange("integrations.discordPresenceFreezePlaybackOnPause", () => {
+      if (this.isEnabled && this.ready && this.videoState === VideoState.Paused && !this.pauseExpired) {
+        this.stopPauseProgressRefresh();
+        this.updateActivity();
+      }
+    });
   }
 
   public onEnabled(): void {
@@ -232,12 +296,14 @@ export default class DiscordPresence extends Integration {
       memoryStore.set("discordPresenceConnectionFailed", false);
       // Reconcile a pause that started before (re)connection.
       this.playerStateChanged(this.getService(PlayerStateStore).getState());
+      if (this.videoDetails && !this.pauseExpired) this.updateActivity();
     });
     this.discordClient.on("close", () => {
       log.info("Discord connection closed");
       this.ready = false;
       clearTimeout(this.pauseTimeout);
       this.pauseTimeout = undefined;
+      this.stopPauseProgressRefresh();
       clearTimeout(this.activityDebounceTimeout);
       this.activityDebounceTimeout = undefined;
       this.retryDiscordConnection();
@@ -259,9 +325,11 @@ export default class DiscordPresence extends Integration {
     clearTimeout(this.activityDebounceTimeout);
     clearTimeout(this.pauseTimeout);
     clearTimeout(this.connectionRetryTimeout);
+    this.stopPauseProgressRefresh();
     this.activityDebounceTimeout = this.pauseTimeout = this.connectionRetryTimeout = undefined;
     this.pauseStartedAt = null;
     this.pauseExpired = false;
+    this.pausedPlaybackPosition = null;
     this.videoState = VideoState.Unknown;
     this.videoDetails = null;
 

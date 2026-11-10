@@ -37,6 +37,7 @@ export type StoreSchema = {
     discordPresenceEnabled: boolean;
     discordPresenceStatusDisplayType: number;
     discordPresencePauseTimeoutSeconds: number;
+    discordPresenceFreezePlaybackOnPause: boolean;
     lastFMEnabled: boolean;
     enhancedMediaServiceEnabled: boolean;
   };

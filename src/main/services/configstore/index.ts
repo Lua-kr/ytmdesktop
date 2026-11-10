@@ -55,6 +55,7 @@ export default class ConfigStore extends Service {
           discordPresenceEnabled: false,
           discordPresenceStatusDisplayType: 1,
           discordPresencePauseTimeoutSeconds: 30,
+          discordPresenceFreezePlaybackOnPause: true,
           lastFMEnabled: false,
           enhancedMediaServiceEnabled: true
         },
