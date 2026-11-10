@@ -1,7 +1,8 @@
 import PlayerStateStore from "../../services/playerstatestore";
+import ConfigStore from "../../services/configstore";
 import DiscordClient from "./minimal-discord-client";
 import log from "electron-log";
-import { DiscordActivityType } from "./minimal-discord-client/types";
+import { DiscordActivityType, DiscordActivityStatusDisplayType } from "./minimal-discord-client/types";
 import Integration from "../integration";
 import MemoryStore from "../../services/memorystore";
 import { MemoryStoreSchema } from "~shared/store/schema";
@@ -77,13 +78,24 @@ export default class DiscordPresence extends Integration {
       }
       const { title, author, album, id, thumbnails, durationSeconds, channelId, albumId } = this.videoDetails;
       const thumbnail = getHighestResThumbnail(thumbnails);
+      const displayPreference = this.getService(ConfigStore).get("integrations.discordPresenceStatusDisplayType");
+      // Preferences 3 and 4 combine metadata locally, while Discord RPC accepts only status types 0-2.
+      const combinedStatus = displayPreference === 3 || displayPreference === 4;
+      const statusDisplayType: DiscordActivityStatusDisplayType =
+        displayPreference === DiscordActivityStatusDisplayType.Name ||
+        displayPreference === DiscordActivityStatusDisplayType.Details
+          ? displayPreference
+          : DiscordActivityStatusDisplayType.State;
+      const stateText =
+        displayPreference === 3 ? `${author} - ${title}` :
+        displayPreference === 4 ? `${title} - ${author}` : author;
       this.discordClient?.setActivity({
         type: DiscordActivityType.Listening,
-        status_display_type: 1,
+        status_display_type: statusDisplayType,
         details: stringLimit(title, 128, 2),
         details_url: `https://music.youtube.com/watch?v=${id}`,
-        state: stringLimit(author, 128, 2),
-        state_url: `https://music.youtube.com/channel/${channelId}`,
+        state: stringLimit(stateText, 128, 2),
+        state_url: combinedStatus ? undefined : `https://music.youtube.com/channel/${channelId}`,
         timestamps: {
           start: this.videoState === VideoState.Playing ? Date.now() - this.progress * 1000 : undefined,
           end: this.videoState === VideoState.Playing ? Date.now() + (durationSeconds - this.progress) * 1000 : undefined
@@ -95,13 +107,7 @@ export default class DiscordPresence extends Integration {
           small_image: getSmallImageKey(this.videoState),
           small_text: getSmallImageText(this.videoState)
         },
-        instance: false,
-        buttons: [
-          {
-            label: "Play on YTMDesktop",
-            url: `ytmd://play/${id}`
-          }
-        ]
+        instance: false
       });
       this.activityDebounceTimeout = undefined;
     }, 1000);
