@@ -9,19 +9,6 @@ import { MemoryStoreSchema } from "~shared/store/schema";
 import { PlayerState, Thumbnail, VideoDetails, VideoState } from "~shared/playerstatestore/types";
 
 const DISCORD_CLIENT_ID = "1143202598460076053";
-// 5 seconds here plus the existing 1-second activity debounce gives approximately
-// one paused-position correction every 6 seconds (under the Discord RPC update budget).
-const PAUSED_PROGRESS_REFRESH_INTERVAL_MS = 5_000;
-
-function formatPlaybackTime(seconds: number): string {
-  const wholeSeconds = Math.floor(Math.max(0, seconds));
-  const hours = Math.floor(wholeSeconds / 3600);
-  const minutes = Math.floor((wholeSeconds % 3600) / 60);
-  const remainingSeconds = String(wholeSeconds % 60).padStart(2, "0");
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${remainingSeconds}`
-    : `${minutes}:${remainingSeconds}`;
-}
 
 function getHighestResThumbnail(thumbnails: Thumbnail[]): string {
   return thumbnails.reduce(
@@ -114,8 +101,7 @@ export default class DiscordPresence extends Integration {
       this.videoDetails.durationSeconds <= 0
     ) return;
 
-    // Discord RPC has no pause flag. Periodically re-anchor the bar to the same
-    // song position, but leave headroom for track changes and seeks.
+    // Discord RPC has no pause flag. Re-anchor the same playback position at a modest interval.
     this.pauseProgressRefreshTimeout = setTimeout(() => {
       this.pauseProgressRefreshTimeout = undefined;
       if (
@@ -126,7 +112,7 @@ export default class DiscordPresence extends Integration {
       ) {
         this.updateActivity();
       }
-    }, PAUSED_PROGRESS_REFRESH_INTERVAL_MS);
+    }, 5_000);
   }
 
   private schedulePauseClear(): void {
@@ -188,18 +174,10 @@ export default class DiscordPresence extends Integration {
         Number.isFinite(durationSeconds) &&
         durationSeconds > 0;
       const pausedPosition = Math.max(0, Math.min(durationSeconds, this.pausedPlaybackPosition ?? this.progress));
-      // The native Discord bar continues to animate between corrections, so
-      // also show the exact paused time as a stable, human-readable label.
-      const pausedTimeLabel = frozenTimeline
-        ? ` · ⏸ ${formatPlaybackTime(pausedPosition)} / ${formatPlaybackTime(durationSeconds)}`
-        : "";
-      const detailsText = pausedTimeLabel
-        ? stringLimit(title, 128 - pausedTimeLabel.length, 2) + pausedTimeLabel
-        : stringLimit(title, 128, 2);
       this.discordClient?.setActivity({
         type: DiscordActivityType.Listening,
         status_display_type: statusDisplayType,
-        details: detailsText,
+        details: stringLimit(title, 128, 2),
         details_url: `https://music.youtube.com/watch?v=${id}`,
         state: stringLimit(stateText, 128, 2),
         state_url: combinedStatus ? undefined : `https://music.youtube.com/channel/${channelId}`,
@@ -212,7 +190,7 @@ export default class DiscordPresence extends Integration {
           large_text: album ? stringLimit(album, 128, 2) : undefined,
           large_url: albumId ? `https://music.youtube.com/browse/${albumId}` : undefined,
           small_image: getSmallImageKey(this.videoState),
-          small_text: frozenTimeline ? `Paused at ${formatPlaybackTime(pausedPosition)} / ${formatPlaybackTime(durationSeconds)}` : getSmallImageText(this.videoState)
+          small_text: getSmallImageText(this.videoState)
         },
         instance: false
       });
