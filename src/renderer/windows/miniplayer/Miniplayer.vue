@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, useTemplateRef } from "vue";
-import { PlayerState, RepeatMode, Thumbnail, VideoState } from "~shared/playerstatestore/types";
+import { LikeStatus, PlayerState, RepeatMode, Thumbnail, VideoState } from "~shared/playerstatestore/types";
 import RangeInput from "../../components/RangeInput.vue";
 
 const state = ref<PlayerState | null>(null);
@@ -125,6 +125,12 @@ function playPauseVideo() {
 function nextVideo() {
   window.ytmd.executeCommandInYTMView("next");
 }
+function toggleLike() {
+  window.ytmd.executeCommandInYTMView("toggleLike");
+}
+function toggleDislike() {
+  window.ytmd.executeCommandInYTMView("toggleDislike");
+}
 function cycleRepeat() {
   window.ytmd.executeCommandInYTMView("cycleRepeatMode");
 }
@@ -180,7 +186,30 @@ window.addEventListener("resize", reconcileMarquee);
         </div>
       </div>
       <div class="video-controls">
-        <div class="padding" />
+        <div class="controls reactions">
+          <button
+            type="button"
+            class="reaction"
+            :class="{ active: state?.videoDetails?.likeStatus === LikeStatus.Like }"
+            :aria-pressed="state?.videoDetails?.likeStatus === LikeStatus.Like"
+            aria-label="Like current song"
+            title="Like"
+            @click="toggleLike"
+          >
+            <span class="icon material-symbols-outlined">thumb_up</span>
+          </button>
+          <button
+            type="button"
+            class="reaction"
+            :class="{ active: state?.videoDetails?.likeStatus === LikeStatus.Dislike }"
+            :aria-pressed="state?.videoDetails?.likeStatus === LikeStatus.Dislike"
+            aria-label="Dislike current song"
+            title="Dislike"
+            @click="toggleDislike"
+          >
+            <span class="icon material-symbols-outlined">thumb_down</span>
+          </button>
+        </div>
         <div class="controls">
           <button
             class="previous"
@@ -326,6 +355,49 @@ window.addEventListener("resize", reconcileMarquee);
 
 .controls.right {
   justify-self: end;
+}
+
+.controls.reactions {
+  justify-self: start;
+  padding-left: 8px;
+  gap: 2px;
+}
+
+.controls.reactions .reaction {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #dddddd;
+}
+
+.controls.reactions .reaction .icon {
+  font-size: 20px;
+}
+
+.controls.reactions .reaction.active {
+  color: #ff5757;
+  background-color: rgba(255, 87, 87, 0.15);
+}
+
+.controls.reactions .reaction:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 1px;
+}
+
+/* At narrower widths use the free space at the left of the title bar. */
+@media (max-width: 420px) {
+  .controls.reactions {
+    position: fixed;
+    z-index: 10;
+    top: 0;
+    left: 4px;
+    height: 36px;
+    padding-left: 0;
+  }
 }
 
 .controls button {
