@@ -353,11 +353,19 @@ window.addEventListener("resize", reconcileMarquee);
   justify-self: center;
 }
 
+/* Explicit grid columns keep playback centered when narrow layouts position
+   the reaction controls in the window titlebar instead of the grid. */
+.video-controls > .controls:not(.reactions):not(.right) {
+  grid-column: 2;
+}
+
 .controls.right {
+  grid-column: 3;
   justify-self: end;
 }
 
 .controls.reactions {
+  grid-column: 1;
   justify-self: start;
   padding-left: 8px;
   gap: 2px;
