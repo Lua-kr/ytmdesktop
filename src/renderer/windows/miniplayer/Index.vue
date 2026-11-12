@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { MiniplayerAppearance, MiniplayerHideTarget } from "~shared/store/schema";
 import Miniplayer from "./Miniplayer.vue";
 
 const isWayland = ref(window.ytmd.isWayland());
 const alwaysOnTop = ref(true);
 const pointerInside = ref(false);
-const appearance = ref<MiniplayerAppearance>(await window.ytmd.getMiniplayerAppearance());
+const appearance = ref<MiniplayerAppearance>({
+  miniplayerAutoHideEnabled: false,
+  miniplayerHideOnLeave: ["all"],
+  miniplayerTransparency: 0
+});
 
-window.ytmd.onMiniplayerAppearanceChanged(next => {
-  appearance.value = next;
+onMounted(async () => {
+  appearance.value = await window.ytmd.getMiniplayerAppearance();
+  window.ytmd.onMiniplayerAppearanceChanged(next => {
+    appearance.value = next;
+  });
 });
 
 const hideEntireUi = computed(() =>
