@@ -482,6 +482,7 @@ app.on("ready", async () => {
 
     miniplayerWindow.once("electronwindow-close", () => {
       clearInterval(miniplayerPointerMonitor);
+      miniplayerCommandsClosed = true;
       stopMiniplayerCommandRetry();
       queuedMiniplayerCommands.length = 0;
       artworkDragStart = null;
@@ -503,13 +504,34 @@ app.on("ready", async () => {
         miniplayerCommandRetryTimer = undefined;
       }
     };
-    const flushMiniplayerCommands = () => {
+    // With "Pause on application launch" enabled, the YTM view uses
+    // document-user-activation-required. Remote IPC does not confer a user
+    // gesture on that document. Execute *only user-clicked playback* under
+    // Electron's userGesture context; leave the startup pause policy intact.
+    const playWithGestureScript = `(() => {
+      const api = window.__YTMD_HOOK__?.ytmPlayerController?.playerApi;
+      if (!api) return false;
+      api.playVideo();
+      return true;
+    })()`;
+    const toggleWithGestureScript = `(() => {
+      const api = window.__YTMD_HOOK__?.ytmPlayerController?.playerApi;
+      if (!api) return false;
+      if (api.getPlayerState() === 1) api.pauseVideo();
+      else api.playVideo();
+      return true;
+    })()`;
+
+    let miniplayerCommandsClosed = false;
+    let miniplayerCommandDraining = false;
+    const flushMiniplayerCommands = async (): Promise<void> => {
+      if (miniplayerCommandsClosed || miniplayerCommandDraining) return;
       const oldestAllowed = Date.now() - MAX_MINIPLAYER_COMMAND_AGE_MS;
       while (queuedMiniplayerCommands.length && queuedMiniplayerCommands[0].queuedAt < oldestAllowed) {
         const dropped = queuedMiniplayerCommands.shift();
         log.warn(`Miniplayer command '${dropped?.command}' expired while YouTube Music was not ready`);
       }
-      if (queuedMiniplayerCommands.length === 0) {
+      if (!queuedMiniplayerCommands.length) {
         stopMiniplayerCommandRetry();
         return;
       }
@@ -519,10 +541,40 @@ app.on("ready", async () => {
         !remoteControlApi.isConnected
       ) return;
 
-      const readyCommands = queuedMiniplayerCommands.splice(0);
-      stopMiniplayerCommandRetry();
-      for (const item of readyCommands) {
-        remoteControlApi.postMessage("execute", item.command, ...item.args);
+      miniplayerCommandDraining = true;
+      try {
+        while (queuedMiniplayerCommands.length && !miniplayerCommandsClosed) {
+          if (
+            ytmViewManager.status !== YTMViewStatus.Ready ||
+            (ytmViewManager.getSetupFlags() & YTMViewSetupCompletionFlags.Remote) === 0 ||
+            !remoteControlApi.isConnected
+          ) break;
+
+          const item = queuedMiniplayerCommands.shift()!;
+          if (item.command === "playPause" || item.command === "play") {
+            const contents = ytmViewManager.getView()?.webContents;
+            if (contents && !contents.isDestroyed() && contents.getURL().startsWith("https://music.youtube.com")) {
+              try {
+                const script = item.command === "playPause" ? toggleWithGestureScript : playWithGestureScript;
+                const handled = await contents.executeJavaScript(script, true);
+                if (miniplayerCommandsClosed) return;
+                if (handled === true) continue;
+              } catch (error) {
+                log.warn("Miniplayer user-gesture playback failed; using RemoteControl fallback", error);
+              }
+            }
+          }
+
+          if (miniplayerCommandsClosed) return;
+          if (!remoteControlApi.isConnected) {
+            queuedMiniplayerCommands.unshift(item);
+            break;
+          }
+          remoteControlApi.postMessage("execute", item.command, ...item.args);
+        }
+      } finally {
+        miniplayerCommandDraining = false;
+        if (!queuedMiniplayerCommands.length) stopMiniplayerCommandRetry();
       }
     };
 
@@ -566,9 +618,9 @@ app.on("ready", async () => {
       }
       queuedMiniplayerCommands.push({ command, args, queuedAt: Date.now() });
       if (queuedMiniplayerCommands.length > 20) queuedMiniplayerCommands.shift();
-      flushMiniplayerCommands();
+      void flushMiniplayerCommands();
       if (queuedMiniplayerCommands.length && miniplayerCommandRetryTimer === undefined) {
-        miniplayerCommandRetryTimer = setInterval(flushMiniplayerCommands, 250);
+        miniplayerCommandRetryTimer = setInterval(() => { void flushMiniplayerCommands(); }, 250);
       }
     });
 

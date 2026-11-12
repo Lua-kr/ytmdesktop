@@ -30,9 +30,9 @@ onMounted(() => {
   });
 });
 
+const autoHideActive = computed(() => appearance.value.miniplayerAutoHideEnabled && !pointerInside.value);
 const hideEntireUi = computed(() =>
-  appearance.value.miniplayerAutoHideEnabled &&
-  !pointerInside.value &&
+  autoHideActive.value &&
   appearance.value.miniplayerHideOnLeave.includes("all")
 );
 const hiddenSections = computed<MiniplayerHideTarget[]>(() => {
@@ -92,6 +92,7 @@ function pinUnpinMiniplayer() {
     <Miniplayer
       :hidden-sections="hiddenSections"
       :hide-entire-ui="hideEntireUi"
+      :auto-hide-active="autoHideActive"
       :always-show-liked="appearance.miniplayerAlwaysShowLiked"
     />
   </Suspense>

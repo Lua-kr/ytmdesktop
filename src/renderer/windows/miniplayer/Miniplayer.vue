@@ -7,6 +7,7 @@ import RangeInput from "../../components/RangeInput.vue";
 const props = defineProps<{
   hiddenSections: MiniplayerHideTarget[];
   hideEntireUi: boolean;
+  autoHideActive: boolean;
   alwaysShowLiked: boolean;
 }>();
 
@@ -27,12 +28,21 @@ const playbackGroup = useTemplateRef<HTMLDivElement>("playbackGroup");
 const reactionsGroup = useTemplateRef<HTMLDivElement>("reactionsGroup");
 const rightGroup = useTemplateRef<HTMLDivElement>("rightGroup");
 const reactionsInTopbar = ref(false);
+// When auto-hide is active, the persistent liked indicator replaces the
+// regular like/dislike pair. A dislike icon must never remain visible.
+const likedOnlyMode = computed(() =>
+  props.alwaysShowLiked &&
+  props.autoHideActive &&
+  props.hiddenSections.length > 0
+);
+const hideNormalReactions = computed(() =>
+  props.hiddenSections.includes("reactions") || likedOnlyMode.value
+);
 const bottomControlsHidden = computed(() =>
-  props.hiddenSections.includes("reactions") && props.hiddenSections.includes("playback")
+  hideNormalReactions.value && props.hiddenSections.includes("playback")
 );
 const showPinnedLiked = computed(() =>
-  props.alwaysShowLiked &&
-  props.hiddenSections.includes("reactions") &&
+  likedOnlyMode.value &&
   state.value?.videoDetails?.likeStatus === LikeStatus.Like
 );
 let controlsResizeObserver: ResizeObserver | null = null;
@@ -355,7 +365,7 @@ window.addEventListener("resize", reconcileMarquee);
         <div
           ref="reactionsGroup"
           class="controls reactions"
-          :class="{ 'in-topbar': reactionsInTopbar, 'ui-hidden': props.hiddenSections.includes('reactions') }"
+          :class="{ 'in-topbar': reactionsInTopbar, 'ui-hidden': hideNormalReactions }"
         >
           <button
             type="button"
@@ -570,15 +580,6 @@ window.addEventListener("resize", reconcileMarquee);
   justify-self: end;
 }
 
-.controls.reactions:not(.in-topbar)::after {
-  content: "";
-  display: block;
-  height: 18px;
-  width: 1px;
-  margin-left: 8px;
-  background: rgba(255, 255, 255, 0.25);
-}
-
 .controls.reactions .reaction {
   width: 28px;
   height: 30px;
@@ -699,9 +700,6 @@ window.addEventListener("resize", reconcileMarquee);
   .volume .slider {
     width: 36px;
     flex-basis: 36px;
-  }
-  .controls.reactions:not(.in-topbar)::after {
-    display: none;
   }
 }
 
