@@ -376,6 +376,26 @@ app.on("ready", async () => {
     });
   });
 
+  const getMiniplayerAppearance = () => {
+    const appearance = configStore.get("appearance");
+    return {
+      miniplayerAutoHideEnabled: appearance.miniplayerAutoHideEnabled ?? false,
+      miniplayerHideOnLeave: Array.isArray(appearance.miniplayerHideOnLeave) ? appearance.miniplayerHideOnLeave : ["all"],
+      miniplayerTransparency: appearance.miniplayerTransparency ?? 0
+    };
+  };
+  const getMiniplayerOpacity = (): number => {
+    const transparency = Number(configStore.get("appearance.miniplayerTransparency"));
+    const safeTransparency = Number.isFinite(transparency) ? Math.max(0, Math.min(90, transparency)) : 0;
+    return 1 - safeTransparency / 100;
+  };
+  configStore.onDidChange("appearance", () => {
+    if (!windowManager.hasWindow("Miniplayer")) return;
+    const window = windowManager.getWindow("Miniplayer");
+    window._getElectronWindow().setOpacity(getMiniplayerOpacity());
+    window.ipcBroadcast("miniplayer:appearanceChanged", getMiniplayerAppearance());
+  });
+
   mainWindow.ipcOn("window:openMiniplayer", () => {
     if (windowManager.hasWindow("Miniplayer")) {
       windowManager.getWindow("Miniplayer").showAndFocus();
@@ -414,6 +434,8 @@ app.on("ready", async () => {
     });
     // On mac and windows `pop-up-menu` will keep the miniplayer above the dock or taskbar
     miniplayerWindow._getElectronWindow().setAlwaysOnTop(true, "pop-up-menu");
+    miniplayerWindow._getElectronWindow().setOpacity(getMiniplayerOpacity());
+    miniplayerWindow.ipcHandle("miniplayer:getAppearance", () => getMiniplayerAppearance());
     miniplayerWindow.on("electronwindow-will-resize", () => {
       const playerState = playerStateStore.getState();
       if (playerState.videoDetails?.videoType === VideoType.MusicVideo) {

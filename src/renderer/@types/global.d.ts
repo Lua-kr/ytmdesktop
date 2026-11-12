@@ -1,6 +1,6 @@
 import { WindowsEventArguments, YTMViewStatus } from "~shared/types";
 import Store from "../store-ipc/store";
-import { StoreSchema, MemoryStoreSchema } from "~shared/store/schema";
+import { StoreSchema, MemoryStoreSchema, MiniplayerAppearance } from "~shared/store/schema";
 import MemoryStore from "../store-ipc/memory-store";
 import { PlayerState } from "~shared/playerstatestore/types";
 
@@ -66,6 +66,8 @@ declare global {
       isAppUpdateDownloaded(): Promise<boolean>;
 
       // Miniplayer specific
+      getMiniplayerAppearance(): Promise<MiniplayerAppearance>;
+      onMiniplayerAppearanceChanged(callback: (appearance: MiniplayerAppearance) => void): void;
       playerStore: {
         getState(): PlayerState | null;
         handleStateChanged(callback: (state: PlayerState) => void);

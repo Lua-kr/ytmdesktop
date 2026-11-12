@@ -3,6 +3,7 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import { WindowsEventArguments } from "~shared/types";
+import { MiniplayerAppearance } from "~shared/store/schema";
 
 contextBridge.exposeInMainWorld("ytmd", {
   minimizeWindow: () => ipcRenderer.send("windowControls:minimize"),
@@ -15,6 +16,9 @@ contextBridge.exposeInMainWorld("ytmd", {
       callback(args);
     }),
   requestWindowState: () => ipcRenderer.send("windowControls:requestState"),
+  getMiniplayerAppearance: async (): Promise<MiniplayerAppearance> => await ipcRenderer.invoke("miniplayer:getAppearance"),
+  onMiniplayerAppearanceChanged: (callback: (appearance: MiniplayerAppearance) => void) =>
+    ipcRenderer.on("miniplayer:appearanceChanged", (_event, appearance: MiniplayerAppearance) => callback(appearance)),
 
   playerStore: {
     getState: async () => {

@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { MiniplayerHideTarget } from "~shared/store/schema";
 import { LikeStatus, PlayerState, RepeatMode, Thumbnail, VideoState } from "~shared/playerstatestore/types";
 import RangeInput from "../../components/RangeInput.vue";
+
+const props = defineProps<{
+  hiddenSections: MiniplayerHideTarget[];
+  hideEntireUi: boolean;
+}>();
 
 const state = ref<PlayerState | null>(null);
 state.value = await window.ytmd.playerStore.getState();
@@ -15,6 +21,20 @@ const videoId = ref("");
 const seekbarContainer = useTemplateRef("seekbarContainer");
 const infoContainer = useTemplateRef("infoContainer");
 const infoTitle = useTemplateRef("infoTitle");
+const controlsRow = useTemplateRef<HTMLDivElement>("controlsRow");
+const playbackGroup = useTemplateRef<HTMLDivElement>("playbackGroup");
+const reactionsGroup = useTemplateRef<HTMLDivElement>("reactionsGroup");
+const reactionsInTopbar = ref(false);
+let controlsResizeObserver: ResizeObserver | null = null;
+
+// Use the actual available space, not a fixed viewport-width breakpoint.
+function reconcileReactionsPlacement() {
+  if (!controlsRow.value || !playbackGroup.value || !reactionsGroup.value) return;
+  const leftAvailable = (controlsRow.value.clientWidth - playbackGroup.value.offsetWidth) / 2;
+  const leftRequired = reactionsGroup.value.offsetWidth + 16;
+  reactionsInTopbar.value = leftAvailable < leftRequired;
+}
+
 
 function getHighestResThumbnail(thumbnails: Thumbnail[]): string {
   return thumbnails.reduce(
@@ -68,6 +88,20 @@ onMounted(() => {
 
   window.ytmd.requestWindowState();
   stateChanged(state.value);
+  nextTick(() => {
+    reconcileReactionsPlacement();
+    if (controlsRow.value && playbackGroup.value && reactionsGroup.value) {
+      controlsResizeObserver = new ResizeObserver(reconcileReactionsPlacement);
+      controlsResizeObserver.observe(controlsRow.value);
+      controlsResizeObserver.observe(playbackGroup.value);
+    }
+  });
+  window.addEventListener("resize", reconcileReactionsPlacement);
+});
+
+onUnmounted(() => {
+  controlsResizeObserver?.disconnect();
+  window.removeEventListener("resize", reconcileReactionsPlacement);
 });
 
 const seekHandleVisible = ref(false);
@@ -155,10 +189,14 @@ window.addEventListener("resize", reconcileMarquee);
   >
     <div class="pusher"></div>
     <div class="video-data">
-      <div class="backdrop" />
+      <div
+        class="backdrop"
+        :class="{ 'ui-hidden': props.hideEntireUi }"
+      />
       <div
         ref="infoContainer"
         class="video-info"
+        :class="{ 'ui-hidden': props.hiddenSections.includes('title') }"
       >
         <span
           ref="infoTitle"
@@ -168,6 +206,7 @@ window.addEventListener("resize", reconcileMarquee);
       <div
         ref="seekbarContainer"
         class="seekbar-container"
+        :class="{ 'ui-hidden': props.hiddenSections.includes('seekbar') }"
         @mouseenter="showSeekHandle"
         @mouseleave="hideSeekHandle"
         @mousedown="startDrag"
@@ -185,8 +224,15 @@ window.addEventListener("resize", reconcileMarquee);
           />
         </div>
       </div>
-      <div class="video-controls">
-        <div class="controls reactions">
+      <div
+        ref="controlsRow"
+        class="video-controls"
+      >
+        <div
+          ref="reactionsGroup"
+          class="controls reactions"
+          :class="{ 'in-topbar': reactionsInTopbar, 'ui-hidden': props.hiddenSections.includes('reactions') }"
+        >
           <button
             type="button"
             class="reaction"
@@ -210,7 +256,11 @@ window.addEventListener("resize", reconcileMarquee);
             <span class="icon material-symbols-outlined">thumb_down</span>
           </button>
         </div>
-        <div class="controls">
+        <div
+          ref="playbackGroup"
+          class="controls playback"
+          :class="{ 'ui-hidden': props.hiddenSections.includes('playback') }"
+        >
           <button
             class="previous"
             @click="previousVideo"
@@ -245,7 +295,10 @@ window.addEventListener("resize", reconcileMarquee);
             <span class="icon material-symbols-outlined">skip_next</span>
           </button>
         </div>
-        <div class="controls right">
+        <div
+          class="controls right"
+          :class="{ 'ui-hidden': props.hiddenSections.includes('playback') }"
+        >
           <div class="volume">
             <RangeInput
               v-model="volume"
@@ -341,7 +394,7 @@ window.addEventListener("resize", reconcileMarquee);
 .video-controls {
   display: grid;
   flex: 1;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   margin-bottom: 8px;
 }
@@ -396,16 +449,19 @@ window.addEventListener("resize", reconcileMarquee);
   outline-offset: 1px;
 }
 
-/* At narrower widths use the free space at the left of the title bar. */
-@media (max-width: 420px) {
-  .controls.reactions {
-    position: fixed;
-    z-index: 10;
-    top: 0;
-    left: 4px;
-    height: 36px;
-    padding-left: 0;
-  }
+.controls.reactions.in-topbar {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  left: 4px;
+  height: 36px;
+  padding-left: 0;
+}
+
+.ui-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .controls button {

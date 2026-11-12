@@ -4,6 +4,8 @@ export enum TrayIconStyle {
   Black = 2
 }
 
+export type MiniplayerHideTarget = "all" | "windowControls" | "reactions" | "playback" | "seekbar" | "title";
+
 export type StoreSchema = {
   metadata: {
     version: 1;
@@ -22,6 +24,9 @@ export type StoreSchema = {
     customCSSPath: string | null;
     zoom: number;
     trayIconStyle: TrayIconStyle;
+    miniplayerAutoHideEnabled: boolean;
+    miniplayerHideOnLeave: MiniplayerHideTarget[];
+    miniplayerTransparency: number;
   };
   playback: {
     continueWhereYouLeftOff: boolean;
@@ -69,6 +74,11 @@ export type StoreSchema = {
     enableDevTools: boolean;
   };
 };
+
+export type MiniplayerAppearance = Pick<
+  StoreSchema["appearance"],
+  "miniplayerAutoHideEnabled" | "miniplayerHideOnLeave" | "miniplayerTransparency"
+>;
 
 export type MemoryStoreSchema = {
   discordPresenceConnectionFailed: boolean;

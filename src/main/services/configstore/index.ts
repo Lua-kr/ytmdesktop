@@ -39,7 +39,10 @@ export default class ConfigStore extends Service {
           customCSSEnabled: false,
           customCSSPath: null,
           zoom: 100,
-          trayIconStyle: TrayIconStyle.Auto
+          trayIconStyle: TrayIconStyle.Auto,
+          miniplayerAutoHideEnabled: false,
+          miniplayerHideOnLeave: ["all"],
+          miniplayerTransparency: 0
         },
         playback: {
           continueWhereYouLeftOff: true,

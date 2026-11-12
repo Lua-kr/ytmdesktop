@@ -1,9 +1,29 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import { MiniplayerAppearance, MiniplayerHideTarget } from "~shared/store/schema";
 import Miniplayer from "./Miniplayer.vue";
 
 const isWayland = ref(window.ytmd.isWayland());
 const alwaysOnTop = ref(true);
+const pointerInside = ref(false);
+const appearance = ref<MiniplayerAppearance>(await window.ytmd.getMiniplayerAppearance());
+
+window.ytmd.onMiniplayerAppearanceChanged(next => {
+  appearance.value = next;
+});
+
+const hideEntireUi = computed(() =>
+  appearance.value.miniplayerAutoHideEnabled &&
+  !pointerInside.value &&
+  appearance.value.miniplayerHideOnLeave.includes("all")
+);
+const hiddenSections = computed<MiniplayerHideTarget[]>(() => {
+  if (pointerInside.value || !appearance.value.miniplayerAutoHideEnabled) return [];
+  const selected = appearance.value.miniplayerHideOnLeave;
+  return selected.includes("all")
+    ? ["windowControls", "reactions", "playback", "seekbar", "title"]
+    : selected;
+});
 
 window.ytmd.handleWindowEvents(windowState => {
   alwaysOnTop.value = windowState.alwaysOnTop;
@@ -19,7 +39,15 @@ function pinUnpinMiniplayer() {
 </script>
 
 <template>
-  <div class="topbar">
+  <div
+    class="miniplayer-shell"
+    @pointerenter="pointerInside = true"
+    @pointerleave="pointerInside = false"
+  >
+  <div
+    class="topbar"
+    :class="{ 'ui-hidden': hiddenSections.includes('windowControls') }"
+  >
     <div class="backdrop" />
     <div class="button-container">
       <button
@@ -47,11 +75,28 @@ function pinUnpinMiniplayer() {
     </div>
   </div>
   <Suspense>
-    <Miniplayer />
+    <Miniplayer
+      :hidden-sections="hiddenSections"
+      :hide-entire-ui="hideEntireUi"
+    />
   </Suspense>
+  </div>
 </template>
 
 <style scoped>
+.miniplayer-shell {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ui-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .topbar {
   height: 36px;
   display: flex;

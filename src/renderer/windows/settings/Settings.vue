@@ -2,7 +2,7 @@
 import { ref } from "vue";
 import KeybindInput from "../../components/KeybindInput.vue";
 import YTMDSetting from "../../components/YTMDSetting.vue";
-import { StoreSchema, TrayIconStyle } from "~shared/store/schema";
+import { MiniplayerHideTarget, StoreSchema, TrayIconStyle } from "~shared/store/schema";
 import { AuthToken } from "~shared/integrations/companion-server/types";
 import logo from "~assets/icons/ytmd.png";
 
@@ -49,6 +49,17 @@ const customCSSEnabled = ref<boolean>(appearance.customCSSEnabled);
 const customCSSPath = ref<string>(appearance.customCSSPath);
 const zoom = ref<number>(appearance.zoom);
 const trayIconStyle = ref<number>(appearance.trayIconStyle);
+const miniplayerAutoHideEnabled = ref<boolean>(appearance.miniplayerAutoHideEnabled ?? false);
+const miniplayerHideOnLeave = ref<MiniplayerHideTarget[]>(appearance.miniplayerHideOnLeave ?? ["all"]);
+const miniplayerTransparency = ref<number>(appearance.miniplayerTransparency ?? 0);
+const miniplayerHideOptions: { key: MiniplayerHideTarget; label: string }[] = [
+  { key: "all", label: "Entire UI" },
+  { key: "windowControls", label: "Top window controls (pin / close)" },
+  { key: "reactions", label: "Like / Dislike buttons" },
+  { key: "playback", label: "Playback / Volume / Repeat buttons" },
+  { key: "seekbar", label: "Playback progress bar" },
+  { key: "title", label: "Song title / artist" }
+];
 
 const continueWhereYouLeftOff = ref<boolean>(playback.continueWhereYouLeftOff);
 const continueWhereYouLeftOffPaused = ref<boolean>(playback.continueWhereYouLeftOffPaused);
@@ -94,6 +105,9 @@ store.onDidAnyChange(async newState => {
   customCSSPath.value = newState.appearance.customCSSPath;
   zoom.value = newState.appearance.zoom;
   trayIconStyle.value = newState.appearance.trayIconStyle;
+  miniplayerAutoHideEnabled.value = newState.appearance.miniplayerAutoHideEnabled ?? false;
+  miniplayerHideOnLeave.value = newState.appearance.miniplayerHideOnLeave ?? ["all"];
+  miniplayerTransparency.value = newState.appearance.miniplayerTransparency ?? 0;
 
   continueWhereYouLeftOff.value = newState.playback.continueWhereYouLeftOff;
   continueWhereYouLeftOffPaused.value = newState.playback.continueWhereYouLeftOffPaused;
@@ -173,6 +187,21 @@ memoryStore.onStateChanged(newState => {
   lastFMAuthenticationStep.value = newState.lastFMAuthenticationStep;
 });
 
+function miniplayerHideOptionChanged(target: MiniplayerHideTarget, event: Event) {
+  const checked = (event.target as HTMLInputElement).checked;
+  let selected = [...miniplayerHideOnLeave.value];
+
+  if (target === "all") {
+    selected = checked ? ["all"] : [];
+  } else {
+    selected = selected.filter(option => option !== "all" && option !== target);
+    if (checked) selected.push(target);
+  }
+
+  miniplayerHideOnLeave.value = selected;
+  store.set("appearance.miniplayerHideOnLeave", selected);
+}
+
 async function memorySettingsChanged() {
   memoryStore.set("companionServerAuthWindowEnabled", companionServerAuthWindowEnabled.value);
 }
@@ -188,6 +217,8 @@ async function settingsChanged() {
   store.set("appearance.customCSSEnabled", customCSSEnabled.value);
   store.set("appearance.zoom", zoom.value);
   store.set("appearance.trayIconStyle", trayIconStyle.value);
+  store.set("appearance.miniplayerAutoHideEnabled", miniplayerAutoHideEnabled.value);
+  store.set("appearance.miniplayerTransparency", miniplayerTransparency.value);
 
   store.set("playback.continueWhereYouLeftOff", continueWhereYouLeftOff.value);
   store.set("playback.continueWhereYouLeftOffPaused", continueWhereYouLeftOffPaused.value);
@@ -422,6 +453,46 @@ function stepLastFMAuth() {
             min="30"
             step="10"
             name="Zoom"
+            @change="settingsChanged"
+          />
+          <YTMDSetting
+            v-model="miniplayerAutoHideEnabled"
+            type="checkbox"
+            name="Miniplayer: auto-hide UI when cursor leaves"
+            description="Show the selected controls only while the pointer is over the miniplayer."
+            @change="settingsChanged"
+          />
+          <YTMDSetting
+            v-if="miniplayerAutoHideEnabled"
+            type="custom"
+            flex-column
+            indented
+            name="Miniplayer: controls to hide"
+            description="Select entire UI or any combination of individual sections."
+          >
+            <div class="miniplayer-hide-options">
+              <label
+                v-for="option in miniplayerHideOptions"
+                :key="option.key"
+                class="miniplayer-hide-option"
+              >
+                <input
+                  type="checkbox"
+                  :checked="miniplayerHideOnLeave.includes(option.key)"
+                  @change="miniplayerHideOptionChanged(option.key, $event)"
+                >
+                <span>{{ option.label }}</span>
+              </label>
+            </div>
+          </YTMDSetting>
+          <YTMDSetting
+            v-model="miniplayerTransparency"
+            type="range"
+            :min="0"
+            :max="90"
+            :step="5"
+            name="Miniplayer transparency (%)"
+            description="0 = opaque; 90 = mostly transparent. Applied to the entire miniplayer window."
             @change="settingsChanged"
           />
           <YTMDSetting
@@ -911,6 +982,29 @@ function stepLastFMAuth() {
 </template>
 
 <style scoped>
+.miniplayer-hide-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+  margin-top: 12px;
+}
+
+.miniplayer-hide-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #dddddd;
+  font-size: 14px;
+}
+
+.miniplayer-hide-option input {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
 .settings-container {
   user-select: none;
 }
