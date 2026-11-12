@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue";
 import { MiniplayerHideTarget } from "~shared/store/schema";
 import { LikeStatus, PlayerState, RepeatMode, Thumbnail, VideoState } from "~shared/playerstatestore/types";
 import RangeInput from "../../components/RangeInput.vue";
@@ -29,6 +29,11 @@ const rightGroup = useTemplateRef<HTMLDivElement>("rightGroup");
 const reactionsInTopbar = ref(false);
 const bottomControlsHidden = computed(() =>
   props.hiddenSections.includes("reactions") && props.hiddenSections.includes("playback")
+);
+const showPinnedLiked = computed(() =>
+  props.alwaysShowLiked &&
+  props.hiddenSections.includes("reactions") &&
+  state.value?.videoDetails?.likeStatus === LikeStatus.Like
 );
 let controlsResizeObserver: ResizeObserver | null = null;
 
@@ -78,14 +83,19 @@ async function stateChanged(newState) {
 }
 
 function reconcileMarquee() {
-  if (infoTitle.value) {
-    if (infoTitle.value.scrollWidth > infoContainer.value.clientWidth) {
-      infoTitle.value.classList.add("marquee");
-    } else {
-      infoTitle.value.classList.remove("marquee");
-    }
+  if (!infoTitle.value || !infoContainer.value) return;
+  if (infoTitle.value.scrollWidth > infoContainer.value.clientWidth) {
+    infoTitle.value.classList.add("marquee");
+  } else {
+    infoTitle.value.classList.remove("marquee");
   }
 }
+
+// The liked badge reserves horizontal space beside the title. Re-check
+// marquee overflow whenever that reserved space appears or disappears.
+watch(showPinnedLiked, () => {
+  nextTick(reconcileMarquee);
+});
 
 onMounted(() => {
   window.ytmd.playerStore.handleStateChanged(newState => {
@@ -195,16 +205,6 @@ window.addEventListener("resize", reconcileMarquee);
     v-if="state?.videoDetails != null"
     class="container"
   >
-    <button
-      v-if="props.alwaysShowLiked && props.hiddenSections.includes('reactions') && state.videoDetails.likeStatus === LikeStatus.Like"
-      type="button"
-      class="pinned-liked"
-      aria-label="Unlike current song"
-      title="Liked song (click to remove like)"
-      @click="toggleLike"
-    >
-      <span class="icon material-symbols-outlined">thumb_up</span>
-    </button>
     <div class="pusher"></div>
     <div
       class="video-data"
@@ -215,14 +215,34 @@ window.addEventListener("resize", reconcileMarquee);
         :class="{ 'ui-hidden': props.hideEntireUi }"
       />
       <div
-        ref="infoContainer"
-        class="video-info"
-        :class="{ 'ui-hidden': props.hiddenSections.includes('title') }"
+        class="video-title-row"
+        :class="{ 'ui-hidden': props.hiddenSections.includes('title') && !showPinnedLiked }"
       >
+        <button
+          v-if="showPinnedLiked"
+          type="button"
+          class="pinned-liked"
+          aria-label="Unlike current song"
+          title="Liked song (click to remove like)"
+          @click="toggleLike"
+        >
+          <span class="icon material-symbols-outlined">thumb_up</span>
+        </button>
+        <div
+          ref="infoContainer"
+          class="video-info"
+          :class="{ 'ui-hidden': props.hiddenSections.includes('title') }"
+        >
+          <span
+            ref="infoTitle"
+            class="title"
+          >{{ state?.videoDetails?.title }} • {{ state?.videoDetails?.author }}</span>
+        </div>
         <span
-          ref="infoTitle"
-          class="title"
-        >{{ state?.videoDetails?.title }} • {{ state?.videoDetails?.author }}</span>
+          v-if="showPinnedLiked"
+          class="liked-layout-spacer"
+          aria-hidden="true"
+        />
       </div>
       <div
         ref="seekbarContainer"
@@ -411,7 +431,7 @@ window.addEventListener("resize", reconcileMarquee);
   padding-bottom: 0;
 }
 .video-data.controls-collapsed .seekbar-container.ui-hidden,
-.video-data.controls-collapsed .video-info.ui-hidden {
+.video-data.controls-collapsed .video-title-row.ui-hidden {
   display: none;
 }
 .video-controls.controls-collapsed {
@@ -509,14 +529,13 @@ window.addEventListener("resize", reconcileMarquee);
 }
 
 .pinned-liked {
-  position: fixed;
-  z-index: 12;
-  top: 2px;
-  left: 6px;
-  width: 32px;
-  height: 32px;
+  position: relative;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 22px;
+  margin-left: 4px;
   padding: 0;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   color: #ff5757;
@@ -525,6 +544,10 @@ window.addEventListener("resize", reconcileMarquee);
   border-radius: 50%;
   cursor: pointer;
   -webkit-app-region: no-drag;
+}
+.liked-layout-spacer {
+  flex: 0 0 32px;
+  pointer-events: none;
 }
 .pinned-liked .icon {
   font-size: 20px;
@@ -596,8 +619,18 @@ window.addEventListener("resize", reconcileMarquee);
   }
 }
 
+.video-title-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 22px;
+  flex: 0 0 22px;
+  min-width: 0;
+}
 .video-info {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   flex-direction: column;
   justify-content: center;
   max-height: 38px;
