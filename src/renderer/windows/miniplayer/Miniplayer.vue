@@ -24,15 +24,21 @@ const infoTitle = useTemplateRef("infoTitle");
 const controlsRow = useTemplateRef<HTMLDivElement>("controlsRow");
 const playbackGroup = useTemplateRef<HTMLDivElement>("playbackGroup");
 const reactionsGroup = useTemplateRef<HTMLDivElement>("reactionsGroup");
+const rightGroup = useTemplateRef<HTMLDivElement>("rightGroup");
 const reactionsInTopbar = ref(false);
 let controlsResizeObserver: ResizeObserver | null = null;
 
 // Use the actual available space, not a fixed viewport-width breakpoint.
 function reconcileReactionsPlacement() {
-  if (!controlsRow.value || !playbackGroup.value || !reactionsGroup.value) return;
-  const leftAvailable = (controlsRow.value.clientWidth - playbackGroup.value.offsetWidth) / 2;
-  const leftRequired = reactionsGroup.value.offsetWidth + 16;
-  reactionsInTopbar.value = leftAvailable < leftRequired;
+  if (!controlsRow.value || !playbackGroup.value || !reactionsGroup.value || !rightGroup.value) return;
+  // All three groups must fit without overlap. Do not base this on the
+  // left space around the playback controls alone; the volume group is wider.
+  const requiredWidth =
+    reactionsGroup.value.offsetWidth +
+    playbackGroup.value.offsetWidth +
+    rightGroup.value.offsetWidth +
+    12;
+  reactionsInTopbar.value = requiredWidth > controlsRow.value.clientWidth;
 }
 
 
@@ -90,10 +96,12 @@ onMounted(() => {
   stateChanged(state.value);
   nextTick(() => {
     reconcileReactionsPlacement();
-    if (controlsRow.value && playbackGroup.value && reactionsGroup.value) {
+    if (controlsRow.value && playbackGroup.value && reactionsGroup.value && rightGroup.value) {
       controlsResizeObserver = new ResizeObserver(reconcileReactionsPlacement);
       controlsResizeObserver.observe(controlsRow.value);
       controlsResizeObserver.observe(playbackGroup.value);
+      controlsResizeObserver.observe(reactionsGroup.value);
+      controlsResizeObserver.observe(rightGroup.value);
     }
   });
   window.addEventListener("resize", reconcileReactionsPlacement);
@@ -296,6 +304,7 @@ window.addEventListener("resize", reconcileMarquee);
           </button>
         </div>
         <div
+          ref="rightGroup"
           class="controls right"
           :class="{ 'ui-hidden': props.hiddenSections.includes('playback') }"
         >
@@ -392,41 +401,36 @@ window.addEventListener("resize", reconcileMarquee);
 }
 
 .video-controls {
-  display: grid;
+  display: flex;
   flex: 1;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 4px;
+  min-width: 0;
   margin-bottom: 8px;
+  -webkit-app-region: no-drag;
 }
 
 .controls {
   display: flex;
+  flex: 0 0 auto;
   justify-content: center;
   align-items: center;
-  justify-self: center;
-}
-
-/* Explicit grid columns keep playback centered when narrow layouts position
-   the reaction controls in the window titlebar instead of the grid. */
-.video-controls > .controls:not(.reactions):not(.right) {
-  grid-column: 2;
 }
 
 .controls.right {
-  grid-column: 3;
-  justify-self: end;
+  margin-left: auto;
 }
 
 .controls.reactions {
-  grid-column: 1;
-  justify-self: start;
-  padding-left: 8px;
   gap: 2px;
 }
 
 .controls.reactions .reaction {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 30px;
+  flex-basis: 28px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -465,10 +469,18 @@ window.addEventListener("resize", reconcileMarquee);
 }
 
 .controls button {
+  position: relative;
+  box-sizing: border-box;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background-color: transparent;
   border: none;
   cursor: pointer;
-  height: 100%;
   -webkit-app-region: no-drag;
 }
 
@@ -481,20 +493,8 @@ window.addEventListener("resize", reconcileMarquee);
 
 .volume .slider {
   width: 56px;
-  margin-right: 6px;
-  margin-bottom: 3px;
-}
-
-.volume {
-  -webkit-app-region: no-drag;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.volume .slider {
-  width: 56px;
-  margin-right: 6px;
+  flex: 0 0 56px;
+  margin-right: 4px;
   margin-bottom: 3px;
 }
 

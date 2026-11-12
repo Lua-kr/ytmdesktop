@@ -12,9 +12,19 @@ const appearance = ref<MiniplayerAppearance>({
   miniplayerTransparency: 0
 });
 
-onMounted(async () => {
-  appearance.value = await window.ytmd.getMiniplayerAppearance();
+onMounted(() => {
+  // Electron's draggable body does not dispatch normal pointer events.
+  // Observe main-process cursor hit testing instead, including the album art.
+  window.ytmd.onMiniplayerPointerInside(inside => {
+    pointerInside.value = inside;
+  });
+  window.ytmd.getMiniplayerPointerInside().then(inside => {
+    pointerInside.value = inside;
+  });
   window.ytmd.onMiniplayerAppearanceChanged(next => {
+    appearance.value = next;
+  });
+  window.ytmd.getMiniplayerAppearance().then(next => {
     appearance.value = next;
   });
 });
@@ -46,11 +56,7 @@ function pinUnpinMiniplayer() {
 </script>
 
 <template>
-  <div
-    class="miniplayer-shell"
-    @pointerenter="pointerInside = true"
-    @pointerleave="pointerInside = false"
-  >
+  <div class="miniplayer-shell">
   <div
     class="topbar"
     :class="{ 'ui-hidden': hiddenSections.includes('windowControls') }"

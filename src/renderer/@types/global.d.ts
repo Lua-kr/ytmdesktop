@@ -67,6 +67,8 @@ declare global {
 
       // Miniplayer specific
       getMiniplayerAppearance(): Promise<MiniplayerAppearance>;
+      getMiniplayerPointerInside(): Promise<boolean>;
+      onMiniplayerPointerInside(callback: (inside: boolean) => void): void;
       onMiniplayerAppearanceChanged(callback: (appearance: MiniplayerAppearance) => void): void;
       playerStore: {
         getState(): PlayerState | null;

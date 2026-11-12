@@ -384,6 +384,7 @@ app.on("ready", async () => {
       miniplayerTransparency: appearance.miniplayerTransparency ?? 0
     };
   };
+  let miniplayerPointerInside = false;
   const getMiniplayerOpacity = (): number => {
     const transparency = Number(configStore.get("appearance.miniplayerTransparency"));
     const safeTransparency = Number.isFinite(transparency) ? Math.max(0, Math.min(90, transparency)) : 0;
@@ -392,7 +393,7 @@ app.on("ready", async () => {
   configStore.onDidChange("appearance", () => {
     if (!windowManager.hasWindow("Miniplayer")) return;
     const window = windowManager.getWindow("Miniplayer");
-    window._getElectronWindow().setOpacity(getMiniplayerOpacity());
+    window._getElectronWindow().setOpacity(miniplayerPointerInside ? 1 : getMiniplayerOpacity());
     window.ipcBroadcast("miniplayer:appearanceChanged", getMiniplayerAppearance());
   });
 
@@ -434,8 +435,31 @@ app.on("ready", async () => {
     });
     // On mac and windows `pop-up-menu` will keep the miniplayer above the dock or taskbar
     miniplayerWindow._getElectronWindow().setAlwaysOnTop(true, "pop-up-menu");
+    miniplayerPointerInside = false;
     miniplayerWindow._getElectronWindow().setOpacity(getMiniplayerOpacity());
     miniplayerWindow.ipcHandle("miniplayer:getAppearance", () => getMiniplayerAppearance());
+    miniplayerWindow.ipcHandle("miniplayer:getPointerInside", () => miniplayerPointerInside);
+
+    // A draggable frameless Electron window does not emit normal mouse events
+    // over the album art. Screen-coordinate hit testing works for the entire
+    // window without disabling its native drag behavior.
+    const updateMiniplayerPointer = () => {
+      const browserWindow = miniplayerWindow._getElectronWindow();
+      if (browserWindow.isDestroyed()) return;
+      const bounds = browserWindow.getBounds();
+      const point = screen.getCursorScreenPoint();
+      const inside =
+        browserWindow.isVisible() &&
+        !browserWindow.isMinimized() &&
+        point.x >= bounds.x && point.x < bounds.x + bounds.width &&
+        point.y >= bounds.y && point.y < bounds.y + bounds.height;
+      if (inside === miniplayerPointerInside) return;
+      miniplayerPointerInside = inside;
+      browserWindow.setOpacity(inside ? 1 : getMiniplayerOpacity());
+      miniplayerWindow.ipcBroadcast("miniplayer:pointerInside", inside);
+    };
+    const miniplayerPointerMonitor = setInterval(updateMiniplayerPointer, 120);
+    updateMiniplayerPointer();
     miniplayerWindow.on("electronwindow-will-resize", () => {
       const playerState = playerStateStore.getState();
       if (playerState.videoDetails?.videoType === VideoType.MusicVideo) {
@@ -456,6 +480,8 @@ app.on("ready", async () => {
     });
 
     miniplayerWindow.once("electronwindow-close", () => {
+      clearInterval(miniplayerPointerMonitor);
+      miniplayerPointerInside = false;
       stateManager.updateState({
         miniplayerWindowBounds: miniplayerWindow._getElectronWindow().getBounds()
       });

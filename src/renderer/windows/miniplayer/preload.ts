@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld("ytmd", {
     }),
   requestWindowState: () => ipcRenderer.send("windowControls:requestState"),
   getMiniplayerAppearance: async (): Promise<MiniplayerAppearance> => await ipcRenderer.invoke("miniplayer:getAppearance"),
+  getMiniplayerPointerInside: async (): Promise<boolean> => await ipcRenderer.invoke("miniplayer:getPointerInside"),
+  onMiniplayerPointerInside: (callback: (inside: boolean) => void) =>
+    ipcRenderer.on("miniplayer:pointerInside", (_event, inside: boolean) => callback(inside)),
   onMiniplayerAppearanceChanged: (callback: (appearance: MiniplayerAppearance) => void) =>
     ipcRenderer.on("miniplayer:appearanceChanged", (_event, appearance: MiniplayerAppearance) => callback(appearance)),
 
