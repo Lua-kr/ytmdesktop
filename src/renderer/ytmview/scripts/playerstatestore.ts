@@ -53,6 +53,42 @@ export default function init() {
   //const playerBar = ytmhook.ytmPlayerController;
   const playerApi = ytmhook.ytmPlayerController.playerApi;
 
+  // YouTube Music can restore its slider value before the actual media
+  // element receives the corresponding volume. This affects both windows,
+  // because they share the same YTM player and its Redux-like state store.
+  let volumePrepared = false;
+  let firstPlayingVolumeApplied = false;
+  function reconcileStartupVolume(phase: "loaded" | "playing") {
+    if (phase === "loaded" ? volumePrepared : firstPlayingVolumeApplied) return;
+
+    const player = ytmStore.getState()?.player;
+    const desiredVolume = player?.volume;
+    // Do not override mute, invalid values, or the user's volume setting.
+    if (
+      player?.muted ||
+      typeof desiredVolume !== "number" ||
+      !Number.isFinite(desiredVolume) ||
+      desiredVolume < 0 ||
+      desiredVolume > 100
+    ) return;
+
+    // Set the guard first, since setVolume may synchronously dispatch another
+    // store update. Retry on the next relevant event if the call throws.
+    if (phase === "loaded") volumePrepared = true;
+    else firstPlayingVolumeApplied = true;
+    try {
+      playerApi.setVolume(desiredVolume);
+    } catch (error) {
+      if (phase === "loaded") volumePrepared = false;
+      else firstPlayingVolumeApplied = false;
+      console.warn("[ytmd-err(initial-volume)] Could not apply YouTube Music startup volume", error);
+    }
+  }
+
+  // Miniplayer clicks are executed through IPC; both player UIs now use
+  // this same volume correction rather than independently setting volume.
+  document.addEventListener("ytmd:reconcile-initial-volume", () => reconcileStartupVolume("playing"));
+
   async function sendStoreState() {
     // We don't want to see everything in the store as there can be some sensitive data so we only send what's necessary to operate
     const state = ytmStore.getState();
@@ -148,6 +184,7 @@ export default function init() {
     playerStateApi.postMessage("updateVideoProgress", progressState.current);
 
     const videoState = playerApi.getPlayerState();
+    if (videoState === 1) reconcileStartupVolume("playing");
     playerStateApi.postMessage("updateVideoState", videoState);
 
     sendVideoData();
@@ -163,6 +200,7 @@ export default function init() {
   });
   playerApi.addEventListener("onStateChange", state => {
     try {
+      if (state === 1) reconcileStartupVolume("playing");
       playerStateApi.postMessage("updateVideoState", state);
     } catch (err) {
       console.error("[ytmd-err(playerApi.onStateChange)]", err);
@@ -176,6 +214,7 @@ export default function init() {
         }
 
         if (event.type === "dataloaded" || event.type === "dataupdated") {
+          if (event.type === "dataloaded") reconcileStartupVolume("loaded");
           sendVideoData();
         }
       }
@@ -185,6 +224,10 @@ export default function init() {
   });
   ytmStore.subscribe(() => {
     try {
+      // If startup was muted, reconcile once after the user unmutes.
+      if (!firstPlayingVolumeApplied && playerApi.getPlayerState() === 1) {
+        reconcileStartupVolume("playing");
+      }
       sendStoreState();
     } catch (err) {
       console.error("[ytmd-err(stateStore.subscribe)]", err);

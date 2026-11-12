@@ -508,31 +508,11 @@ app.on("ready", async () => {
     // document-user-activation-required. Remote IPC does not confer a user
     // gesture on that document. Execute *only user-clicked playback* under
     // Electron's userGesture context; leave the startup pause policy intact.
-    // A volume slider movement explicitly calls playerApi.setVolume(), but
-    // the first media playback can start before that UI volume is applied.
-    // Reapply the stored value just once per YTM document, before first play.
-    // This preserves muted state and delegates the volume curve to YTM
-    // (including its optional Volume Ratio integration).
+    // The common YTM player-state hook now owns startup volume
+    // reconciliation for both main and mini player playback. Signal it
+    // before miniplayer-initiated play without duplicating the logic here.
     const alignFirstPlaybackVolumeScript = `
-      // YTM can restore the UI volume without applying it to the media
-      // element before its first playback. Use the *existing YTM volume*
-      // setting; do not invent a new default or bypass volume-ratio mode.
-      if (!window.__YTMD_MINIPLAYER_FIRST_VOLUME_SYNCED__) {
-        const store = window.__YTMD_HOOK__?.ytmStateStore?.store;
-        const player = store?.getState()?.player;
-        const savedVolume = player?.volume;
-        if (Number.isFinite(savedVolume) && savedVolume >= 0 && savedVolume <= 100) {
-          try {
-            if (!player.muted) {
-              api.setVolume(savedVolume);
-              store.dispatch({ type: "SET_VOLUME", payload: savedVolume });
-            }
-            window.__YTMD_MINIPLAYER_FIRST_VOLUME_SYNCED__ = true;
-          } catch (error) {
-            console.warn("YTMDesktop miniplayer: unable to apply initial volume", error);
-          }
-        }
-      }
+      document.dispatchEvent(new Event("ytmd:reconcile-initial-volume"));
     `;
     const playWithGestureScript = `(() => {
       const api = window.__YTMD_HOOK__?.ytmPlayerController?.playerApi;
