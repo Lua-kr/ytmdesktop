@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import { MiniplayerHideTarget } from "~shared/store/schema";
 import { LikeStatus, PlayerState, RepeatMode, Thumbnail, VideoState } from "~shared/playerstatestore/types";
 import RangeInput from "../../components/RangeInput.vue";
@@ -7,6 +7,7 @@ import RangeInput from "../../components/RangeInput.vue";
 const props = defineProps<{
   hiddenSections: MiniplayerHideTarget[];
   hideEntireUi: boolean;
+  alwaysShowLiked: boolean;
 }>();
 
 const state = ref<PlayerState | null>(null);
@@ -26,19 +27,18 @@ const playbackGroup = useTemplateRef<HTMLDivElement>("playbackGroup");
 const reactionsGroup = useTemplateRef<HTMLDivElement>("reactionsGroup");
 const rightGroup = useTemplateRef<HTMLDivElement>("rightGroup");
 const reactionsInTopbar = ref(false);
+const bottomControlsHidden = computed(() =>
+  props.hiddenSections.includes("reactions") && props.hiddenSections.includes("playback")
+);
 let controlsResizeObserver: ResizeObserver | null = null;
 
 // Use the actual available space, not a fixed viewport-width breakpoint.
 function reconcileReactionsPlacement() {
   if (!controlsRow.value || !playbackGroup.value || !reactionsGroup.value || !rightGroup.value) return;
-  // All three groups must fit without overlap. Do not base this on the
-  // left space around the playback controls alone; the volume group is wider.
-  const requiredWidth =
-    reactionsGroup.value.offsetWidth +
-    playbackGroup.value.offsetWidth +
-    rightGroup.value.offsetWidth +
-    12;
-  reactionsInTopbar.value = requiredWidth > controlsRow.value.clientWidth;
+  // Symmetric grid sides preserve the absolute center of the transport.
+  // At very narrow widths the volume section stacks to fit its own side.
+  const availableSideWidth = Math.max(0, (controlsRow.value.clientWidth - playbackGroup.value.offsetWidth) / 2);
+  reactionsInTopbar.value = reactionsGroup.value.offsetWidth + 6 > availableSideWidth;
 }
 
 
@@ -176,8 +176,8 @@ function toggleDislike() {
 function cycleRepeat() {
   window.ytmd.executeCommandInYTMView("cycleRepeatMode");
 }
-function volumeChanged() {
-  window.ytmd.executeCommandInYTMView("setVolume", volume.value);
+function volumeChanged(newVolume: number) {
+  window.ytmd.executeCommandInYTMView("setVolume", newVolume);
 }
 function toggleMute() {
   if (!state.value?.muted) {
@@ -195,8 +195,21 @@ window.addEventListener("resize", reconcileMarquee);
     v-if="state?.videoDetails != null"
     class="container"
   >
+    <button
+      v-if="props.alwaysShowLiked && props.hiddenSections.includes('reactions') && state.videoDetails.likeStatus === LikeStatus.Like"
+      type="button"
+      class="pinned-liked"
+      aria-label="Unlike current song"
+      title="Liked song (click to remove like)"
+      @click="toggleLike"
+    >
+      <span class="icon material-symbols-outlined">thumb_up</span>
+    </button>
     <div class="pusher"></div>
-    <div class="video-data">
+    <div
+      class="video-data"
+      :class="{ 'controls-collapsed': bottomControlsHidden }"
+    >
       <div
         class="backdrop"
         :class="{ 'ui-hidden': props.hideEntireUi }"
@@ -235,6 +248,7 @@ window.addEventListener("resize", reconcileMarquee);
       <div
         ref="controlsRow"
         class="video-controls"
+        :class="{ 'controls-collapsed': bottomControlsHidden }"
       >
         <div
           ref="reactionsGroup"
@@ -388,6 +402,22 @@ window.addEventListener("resize", reconcileMarquee);
   position: relative;
 }
 
+/* Remove the actual space reserved for the buttons when both lower
+   sections are hidden. The title and seekbar then sit at the bottom. */
+.video-data.controls-collapsed {
+  height: auto;
+}
+.video-data.controls-collapsed .seekbar-container {
+  padding-bottom: 0;
+}
+.video-data.controls-collapsed .seekbar-container.ui-hidden,
+.video-data.controls-collapsed .video-info.ui-hidden {
+  display: none;
+}
+.video-controls.controls-collapsed {
+  display: none;
+}
+
 .video-data .backdrop {
   position: absolute;
   width: 100%;
@@ -401,11 +431,10 @@ window.addEventListener("resize", reconcileMarquee);
 }
 
 .video-controls {
-  display: flex;
+  display: grid;
   flex: 1;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 4px;
   padding: 0 4px;
   min-width: 0;
   margin-bottom: 8px;
@@ -419,12 +448,29 @@ window.addEventListener("resize", reconcileMarquee);
   align-items: center;
 }
 
-.controls.right {
-  margin-left: auto;
+.controls.reactions {
+  grid-column: 1;
+  justify-self: start;
+  gap: 2px;
 }
 
-.controls.reactions {
-  gap: 2px;
+.controls.playback {
+  grid-column: 2;
+  justify-self: center;
+}
+
+.controls.right {
+  grid-column: 3;
+  justify-self: end;
+}
+
+.controls.reactions:not(.in-topbar)::after {
+  content: "";
+  display: block;
+  height: 18px;
+  width: 1px;
+  margin-left: 8px;
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .controls.reactions .reaction {
@@ -462,6 +508,32 @@ window.addEventListener("resize", reconcileMarquee);
   padding-left: 0;
 }
 
+.pinned-liked {
+  position: fixed;
+  z-index: 12;
+  top: 2px;
+  left: 6px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ff5757;
+  background: rgba(0, 0, 0, 0.25);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.pinned-liked .icon {
+  font-size: 20px;
+}
+.pinned-liked:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
 .ui-hidden {
   opacity: 0;
   visibility: hidden;
@@ -496,6 +568,32 @@ window.addEventListener("resize", reconcileMarquee);
   flex: 0 0 56px;
   margin-right: 4px;
   margin-bottom: 3px;
+}
+
+/* Keep the right-hand group inside its symmetric column without
+   pushing the play/pause controls away from the window center. */
+@media (min-width: 306px) and (max-width: 340px) {
+  .volume .slider {
+    width: 40px;
+    flex-basis: 40px;
+  }
+}
+
+@media (max-width: 305px) {
+  .video-data:not(.controls-collapsed) {
+    height: 110px;
+  }
+  .controls.right {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  .volume .slider {
+    width: 36px;
+    flex-basis: 36px;
+  }
+  .controls.reactions:not(.in-topbar)::after {
+    display: none;
+  }
 }
 
 .video-info {

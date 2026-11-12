@@ -9,7 +9,8 @@ const pointerInside = ref(false);
 const appearance = ref<MiniplayerAppearance>({
   miniplayerAutoHideEnabled: false,
   miniplayerHideOnLeave: ["all"],
-  miniplayerTransparency: 0
+  miniplayerTransparency: 0,
+  miniplayerAlwaysShowLiked: false
 });
 
 onMounted(() => {
@@ -91,6 +92,7 @@ function pinUnpinMiniplayer() {
     <Miniplayer
       :hidden-sections="hiddenSections"
       :hide-entire-ui="hideEntireUi"
+      :always-show-liked="appearance.miniplayerAlwaysShowLiked"
     />
   </Suspense>
   </div>

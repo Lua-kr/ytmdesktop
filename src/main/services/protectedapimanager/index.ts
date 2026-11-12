@@ -62,6 +62,9 @@ export class ProtectedAPI extends EventEmitter {
   private waitingInvokes = new Map<string, (...args: unknown[]) => void>();
 
   public readonly name;
+  public get isConnected(): boolean {
+    return this.port !== null;
+  }
 
   constructor(name: string) {
     super();

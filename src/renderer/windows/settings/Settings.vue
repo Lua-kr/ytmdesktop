@@ -52,6 +52,7 @@ const trayIconStyle = ref<number>(appearance.trayIconStyle);
 const miniplayerAutoHideEnabled = ref<boolean>(appearance.miniplayerAutoHideEnabled ?? false);
 const miniplayerHideOnLeave = ref<MiniplayerHideTarget[]>(appearance.miniplayerHideOnLeave ?? ["all"]);
 const miniplayerTransparency = ref<number>(appearance.miniplayerTransparency ?? 0);
+const miniplayerAlwaysShowLiked = ref<boolean>(appearance.miniplayerAlwaysShowLiked ?? false);
 const miniplayerHideOptions: { key: MiniplayerHideTarget; label: string }[] = [
   { key: "all", label: "Entire UI" },
   { key: "windowControls", label: "Top window controls (pin / close)" },
@@ -108,6 +109,7 @@ store.onDidAnyChange(async newState => {
   miniplayerAutoHideEnabled.value = newState.appearance.miniplayerAutoHideEnabled ?? false;
   miniplayerHideOnLeave.value = newState.appearance.miniplayerHideOnLeave ?? ["all"];
   miniplayerTransparency.value = newState.appearance.miniplayerTransparency ?? 0;
+  miniplayerAlwaysShowLiked.value = newState.appearance.miniplayerAlwaysShowLiked ?? false;
 
   continueWhereYouLeftOff.value = newState.playback.continueWhereYouLeftOff;
   continueWhereYouLeftOffPaused.value = newState.playback.continueWhereYouLeftOffPaused;
@@ -219,6 +221,7 @@ async function settingsChanged() {
   store.set("appearance.trayIconStyle", trayIconStyle.value);
   store.set("appearance.miniplayerAutoHideEnabled", miniplayerAutoHideEnabled.value);
   store.set("appearance.miniplayerTransparency", miniplayerTransparency.value);
+  store.set("appearance.miniplayerAlwaysShowLiked", miniplayerAlwaysShowLiked.value);
 
   store.set("playback.continueWhereYouLeftOff", continueWhereYouLeftOff.value);
   store.set("playback.continueWhereYouLeftOffPaused", continueWhereYouLeftOffPaused.value);
@@ -485,6 +488,13 @@ function stepLastFMAuth() {
               </label>
             </div>
           </YTMDSetting>
+          <YTMDSetting
+            v-model="miniplayerAlwaysShowLiked"
+            type="checkbox"
+            name="Miniplayer: show liked status while UI is hidden"
+            description="Keep a highlighted thumbs-up button visible in the top-left when the song is liked and reaction controls are hidden."
+            @change="settingsChanged"
+          />
           <YTMDSetting
             v-model="miniplayerTransparency"
             type="range"

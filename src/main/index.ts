@@ -381,7 +381,8 @@ app.on("ready", async () => {
     return {
       miniplayerAutoHideEnabled: appearance.miniplayerAutoHideEnabled ?? false,
       miniplayerHideOnLeave: Array.isArray(appearance.miniplayerHideOnLeave) ? appearance.miniplayerHideOnLeave : ["all"],
-      miniplayerTransparency: appearance.miniplayerTransparency ?? 0
+      miniplayerTransparency: appearance.miniplayerTransparency ?? 0,
+      miniplayerAlwaysShowLiked: appearance.miniplayerAlwaysShowLiked ?? false
     };
   };
   let miniplayerPointerInside = false;
@@ -481,6 +482,8 @@ app.on("ready", async () => {
 
     miniplayerWindow.once("electronwindow-close", () => {
       clearInterval(miniplayerPointerMonitor);
+      stopMiniplayerCommandRetry();
+      queuedMiniplayerCommands.length = 0;
       miniplayerPointerInside = false;
       stateManager.updateState({
         miniplayerWindowBounds: miniplayerWindow._getElectronWindow().getBounds()
@@ -488,9 +491,55 @@ app.on("ready", async () => {
       mainWindow.showAndFocus();
     });
 
-    miniplayerWindow.ipcOn("remoteControl:execute", (event, command: string, ...args: unknown[]) => {
-      const remoteControlApi = serviceHost.getService(ProtectedAPIManager).createOrGetAPI("RemoteControl");
-      remoteControlApi.postMessage("execute", command, ...args);
+    const remoteControlApi = serviceHost.getService(ProtectedAPIManager).createOrGetAPI("RemoteControl");
+    type QueuedMiniplayerCommand = { command: string; args: unknown[]; queuedAt: number };
+    const queuedMiniplayerCommands: QueuedMiniplayerCommand[] = [];
+    const MAX_MINIPLAYER_COMMAND_AGE_MS = 60_000;
+    let miniplayerCommandRetryTimer: NodeJS.Timeout | undefined;
+    const stopMiniplayerCommandRetry = () => {
+      if (miniplayerCommandRetryTimer !== undefined) {
+        clearInterval(miniplayerCommandRetryTimer);
+        miniplayerCommandRetryTimer = undefined;
+      }
+    };
+    const flushMiniplayerCommands = () => {
+      const oldestAllowed = Date.now() - MAX_MINIPLAYER_COMMAND_AGE_MS;
+      while (queuedMiniplayerCommands.length && queuedMiniplayerCommands[0].queuedAt < oldestAllowed) {
+        const dropped = queuedMiniplayerCommands.shift();
+        log.warn(`Miniplayer command '${dropped?.command}' expired while YouTube Music was not ready`);
+      }
+      if (queuedMiniplayerCommands.length === 0) {
+        stopMiniplayerCommandRetry();
+        return;
+      }
+      if (
+        ytmViewManager.status !== YTMViewStatus.Ready ||
+        (ytmViewManager.getSetupFlags() & YTMViewSetupCompletionFlags.Remote) === 0 ||
+        !remoteControlApi.isConnected
+      ) return;
+
+      const readyCommands = queuedMiniplayerCommands.splice(0);
+      stopMiniplayerCommandRetry();
+      for (const item of readyCommands) {
+        remoteControlApi.postMessage("execute", item.command, ...item.args);
+      }
+    };
+
+    miniplayerWindow.ipcOn("remoteControl:execute", (_event, command: string, ...args: unknown[]) => {
+      if (typeof command !== "string") return;
+      // Unlike the original fire-and-forget path, commands entered before
+      // the RemoteControl port is bound are delivered after YTM is ready.
+      // Coalesce superseded slider/seek values while preserving toggle order.
+      if (command === "setVolume" || command === "seekTo") {
+        const index = queuedMiniplayerCommands.findIndex(item => item.command === command);
+        if (index !== -1) queuedMiniplayerCommands.splice(index, 1);
+      }
+      queuedMiniplayerCommands.push({ command, args, queuedAt: Date.now() });
+      if (queuedMiniplayerCommands.length > 20) queuedMiniplayerCommands.shift();
+      flushMiniplayerCommands();
+      if (queuedMiniplayerCommands.length && miniplayerCommandRetryTimer === undefined) {
+        miniplayerCommandRetryTimer = setInterval(flushMiniplayerCommands, 250);
+      }
     });
 
     miniplayerWindow.ipcHandle("playerStateStore:getState", () => {

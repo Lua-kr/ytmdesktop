@@ -27,6 +27,7 @@ export type StoreSchema = {
     miniplayerAutoHideEnabled: boolean;
     miniplayerHideOnLeave: MiniplayerHideTarget[];
     miniplayerTransparency: number;
+    miniplayerAlwaysShowLiked: boolean;
   };
   playback: {
     continueWhereYouLeftOff: boolean;
@@ -77,7 +78,7 @@ export type StoreSchema = {
 
 export type MiniplayerAppearance = Pick<
   StoreSchema["appearance"],
-  "miniplayerAutoHideEnabled" | "miniplayerHideOnLeave" | "miniplayerTransparency"
+  "miniplayerAutoHideEnabled" | "miniplayerHideOnLeave" | "miniplayerTransparency" | "miniplayerAlwaysShowLiked"
 >;
 
 export type MemoryStoreSchema = {

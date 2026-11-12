@@ -42,7 +42,8 @@ export default class ConfigStore extends Service {
           trayIconStyle: TrayIconStyle.Auto,
           miniplayerAutoHideEnabled: false,
           miniplayerHideOnLeave: ["all"],
-          miniplayerTransparency: 0
+          miniplayerTransparency: 0,
+          miniplayerAlwaysShowLiked: false
         },
         playback: {
           continueWhereYouLeftOff: true,
