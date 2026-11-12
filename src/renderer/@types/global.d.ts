@@ -75,6 +75,7 @@ declare global {
         handleStateChanged(callback: (state: PlayerState) => void);
       };
       executeCommandInYTMView(command: string, ...args: unknown[]);
+      miniplayerArtworkDrag(phase: "start" | "move" | "end"): void;
       isWayland(): boolean;
     };
   }

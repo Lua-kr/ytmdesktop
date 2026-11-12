@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld("ytmd", {
   executeCommandInYTMView: (command: string, ...args: unknown[]) => {
     ipcRenderer.send("remoteControl:execute", command, ...args);
   },
+  miniplayerArtworkDrag: (phase: "start" | "move" | "end") => {
+    ipcRenderer.send("miniplayer:artworkDrag", phase);
+  },
 
   isWayland: () => {
     // Vite overwrites "process.env" calls

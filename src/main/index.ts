@@ -484,6 +484,7 @@ app.on("ready", async () => {
       clearInterval(miniplayerPointerMonitor);
       stopMiniplayerCommandRetry();
       queuedMiniplayerCommands.length = 0;
+      artworkDragStart = null;
       miniplayerPointerInside = false;
       stateManager.updateState({
         miniplayerWindowBounds: miniplayerWindow._getElectronWindow().getBounds()
@@ -524,6 +525,35 @@ app.on("ready", async () => {
         remoteControlApi.postMessage("execute", item.command, ...item.args);
       }
     };
+
+    // Keep click-to-toggle and click-and-drag as separate gestures. The
+    // renderer reports only the gesture phase; cursor coordinates come from
+    // Electron to avoid mixing Windows physical pixels and CSS coordinates.
+    let artworkDragStart: { cursorX: number; cursorY: number; windowX: number; windowY: number } | null = null;
+    miniplayerWindow.ipcOn("miniplayer:artworkDrag", (_event, phase: "start" | "move" | "end") => {
+      if (process.platform === "linux" && !!process.env.WAYLAND_DISPLAY) return;
+      const browserWindow = miniplayerWindow._getElectronWindow();
+      if (browserWindow.isDestroyed()) return;
+
+      if (phase === "end") {
+        artworkDragStart = null;
+        return;
+      }
+
+      if (phase === "start") {
+        const cursor = screen.getCursorScreenPoint();
+        const [windowX, windowY] = browserWindow.getPosition();
+        artworkDragStart = { cursorX: cursor.x, cursorY: cursor.y, windowX, windowY };
+        return;
+      }
+
+      if (phase !== "move" || !artworkDragStart) return;
+      const cursor = screen.getCursorScreenPoint();
+      const nextX = Math.round(artworkDragStart.windowX + cursor.x - artworkDragStart.cursorX);
+      const nextY = Math.round(artworkDragStart.windowY + cursor.y - artworkDragStart.cursorY);
+      const [currentX, currentY] = browserWindow.getPosition();
+      if (currentX !== nextX || currentY !== nextY) browserWindow.setPosition(nextX, nextY);
+    });
 
     miniplayerWindow.ipcOn("remoteControl:execute", (_event, command: string, ...args: unknown[]) => {
       if (typeof command !== "string") return;

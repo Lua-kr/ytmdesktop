@@ -174,6 +174,84 @@ function previousVideo() {
 function playPauseVideo() {
   window.ytmd.executeCommandInYTMView("playPause");
 }
+
+// The artwork is clickable, but a pointer drag must still move the
+// frameless miniplayer rather than toggling playback.
+const ARTWORK_DRAG_THRESHOLD_PX = 6;
+type ArtworkGesture = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  dragging: boolean;
+  lastMoveAt: number;
+};
+let artworkGesture: ArtworkGesture | null = null;
+
+function isArtworkControl(target: EventTarget | null): boolean {
+  return target instanceof Element &&
+    target.closest("button, input, select, textarea, a, .video-controls, .seekbar-container, .range-container") !== null;
+}
+
+function artworkPointerDown(event: PointerEvent) {
+  if (!event.isPrimary || event.button !== 0 || artworkGesture || isArtworkControl(event.target)) return;
+  artworkGesture = {
+    pointerId: event.pointerId,
+    startX: event.screenX,
+    startY: event.screenY,
+    dragging: false,
+    lastMoveAt: 0
+  };
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  window.ytmd.miniplayerArtworkDrag("start");
+}
+
+function artworkPointerMove(event: PointerEvent) {
+  const gesture = artworkGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  if (!gesture.dragging) {
+    const dx = event.screenX - gesture.startX;
+    const dy = event.screenY - gesture.startY;
+    if (Math.hypot(dx, dy) < ARTWORK_DRAG_THRESHOLD_PX) return;
+    gesture.dragging = true;
+  }
+
+  // Limit window movement IPC to approximately 60 updates per second.
+  if (event.timeStamp - gesture.lastMoveAt >= 16) {
+    gesture.lastMoveAt = event.timeStamp;
+    window.ytmd.miniplayerArtworkDrag("move");
+  }
+}
+
+function finishArtworkPointer(event: PointerEvent, canceled = false) {
+  const gesture = artworkGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  artworkGesture = null;
+
+  const container = event.currentTarget as HTMLElement;
+  if (container.hasPointerCapture(event.pointerId)) container.releasePointerCapture(event.pointerId);
+
+  if (gesture.dragging) window.ytmd.miniplayerArtworkDrag("move");
+  window.ytmd.miniplayerArtworkDrag("end");
+
+  if (
+    !gesture.dragging &&
+    !canceled &&
+    event.button === 0 &&
+    event.clientX >= 0 && event.clientX < window.innerWidth &&
+    event.clientY >= 0 && event.clientY < window.innerHeight
+  ) {
+    playPauseVideo();
+  }
+}
+
+function artworkPointerUp(event: PointerEvent) {
+  finishArtworkPointer(event);
+}
+
+function artworkPointerCancel(event: PointerEvent) {
+  finishArtworkPointer(event, true);
+}
+
 function nextVideo() {
   window.ytmd.executeCommandInYTMView("next");
 }
@@ -204,6 +282,10 @@ window.addEventListener("resize", reconcileMarquee);
   <div
     v-if="state?.videoDetails != null"
     class="container"
+    @pointerdown="artworkPointerDown"
+    @pointermove="artworkPointerMove"
+    @pointerup="artworkPointerUp"
+    @pointercancel="artworkPointerCancel"
   >
     <div class="pusher"></div>
     <div
@@ -404,6 +486,9 @@ window.addEventListener("resize", reconcileMarquee);
   flex-direction: column;
   min-height: calc(100vh - 36px);
   max-height: calc(100vh - 36px);
+  /* The artwork must receive pointer events; the topbar remains native draggable. */
+  -webkit-app-region: no-drag;
+  user-select: none;
 }
 
 .container.unavailable {
@@ -413,6 +498,7 @@ window.addEventListener("resize", reconcileMarquee);
 
 .pusher {
   flex-grow: 1;
+  cursor: pointer;
 }
 
 .video-data {
@@ -620,6 +706,7 @@ window.addEventListener("resize", reconcileMarquee);
 }
 
 .video-title-row {
+  cursor: pointer;
   display: flex;
   align-items: center;
   width: 100%;
