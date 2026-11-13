@@ -113,6 +113,9 @@ export class AppWindow<
   private initialViewsReady = 0;
   private localViewReady = false;
   private windowReady = false;
+  // Explicitly hiding a window during initial loading must prevent late
+  // ready-to-show / view dom-ready callbacks from making it visible again.
+  private showWhenReady = true;
   private ipcEventProxy = new EventEmitter();
 
   private thumbarButtons: Electron.ThumbarButton[] = [];
@@ -313,16 +316,19 @@ export class AppWindow<
   }
 
   public showAndFocus() {
+    this.showWhenReady = true;
     if (this.electronWindow?.isMinimized()) this.electronWindow.restore();
     this.electronWindow?.show();
     this.electronWindow?.focus();
   }
 
   public hide() {
+    this.showWhenReady = false;
     this.electronWindow?.hide();
   }
 
   public show() {
+    this.showWhenReady = true;
     this.electronWindow?.show();
   }
 
@@ -426,7 +432,9 @@ export class AppWindow<
                 this.electronWindow instanceof BrowserWindow &&
                 this.localViewReady
               ) {
-                this.electronWindow.show();
+                if (this.showWhenReady) this.electronWindow.show();
+                // Readiness is independent of visibility; startup still
+                // proceeds when the main window is intentionally hidden.
                 this.windowReady = true;
               }
             }
@@ -439,7 +447,7 @@ export class AppWindow<
           this.electronWindow.on("ready-to-show", () => {
             this.localViewReady = true;
             if (this.initialViewsReady >= (this.options.views?.length ?? 0)) {
-              this.electronWindow?.show();
+              if (this.showWhenReady) this.electronWindow?.show();
               this.windowReady = true;
             }
           });
@@ -449,7 +457,7 @@ export class AppWindow<
       for (const view of Object.values(this.activeViews)) {
         view.view._attachToWindow(this, view.index);
       }
-      this.electronWindow.show();
+      if (this.showWhenReady) this.electronWindow.show();
       this.windowReady = true;
     }
 

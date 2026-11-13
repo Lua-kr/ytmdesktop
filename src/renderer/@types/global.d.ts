@@ -51,6 +51,7 @@ declare global {
       maximizeWindow(): void;
       restoreWindow(): void;
       closeWindow(): void;
+      closeLikeMainWindow(): void;
       setAlwaysOnTopWindow(alwaysOnTop: boolean): void;
       handleWindowEvents(callback: (args: WindowsEventArguments) => void);
       requestWindowState(): void;

@@ -480,6 +480,7 @@ app.on("ready", async () => {
       });
     });
 
+    let restoreMainWhenMiniplayerCloses = true;
     miniplayerWindow.once("electronwindow-close", () => {
       clearInterval(miniplayerPointerMonitor);
       miniplayerCommandsClosed = true;
@@ -490,7 +491,21 @@ app.on("ready", async () => {
       stateManager.updateState({
         miniplayerWindowBounds: miniplayerWindow._getElectronWindow().getBounds()
       });
-      mainWindow.showAndFocus();
+      if (restoreMainWhenMiniplayerCloses) mainWindow.showAndFocus();
+    });
+
+    miniplayerWindow.ipcOn("miniplayer:closeLikeMainWindow", () => {
+      // The ordinary miniplayer close returns to Main. This separate X
+      // matches Main's close semantics without reopening Main on the way out.
+      restoreMainWhenMiniplayerCloses = false;
+      if (configStore.get("general.hideToTrayOnClose")) {
+        // Reuse Main's existing close event so its state is persisted and
+        // its hide-to-tray preference is handled in one place.
+        mainWindow.closeWindow();
+        miniplayerWindow.closeWindow();
+      } else {
+        app.quit();
+      }
     });
 
     const remoteControlApi = serviceHost.getService(ProtectedAPIManager).createOrGetAPI("RemoteControl");

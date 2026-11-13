@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("ytmd", {
   maximizeWindow: () => ipcRenderer.send("windowControls:maximize"),
   restoreWindow: () => ipcRenderer.send("windowControls:restore"),
   closeWindow: () => ipcRenderer.send("windowControls:close"),
+  closeLikeMainWindow: () => ipcRenderer.send("miniplayer:closeLikeMainWindow"),
   setAlwaysOnTopWindow: (alwaysOnTop: boolean) => ipcRenderer.send("windowControls:setAlwaysOnTop", alwaysOnTop),
   handleWindowEvents: (callback: (args: WindowsEventArguments) => void) =>
     ipcRenderer.on("windowControls:stateChanged", (event: Electron.IpcRendererEvent, args: WindowsEventArguments) => {

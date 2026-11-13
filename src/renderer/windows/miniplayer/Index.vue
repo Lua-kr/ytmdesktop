@@ -51,6 +51,10 @@ function closeMiniplayer() {
   window.ytmd.closeWindow();
 }
 
+function closeLikeMainWindow() {
+  window.ytmd.closeLikeMainWindow();
+}
+
 function pinUnpinMiniplayer() {
   window.ytmd.setAlwaysOnTopWindow(!alwaysOnTop.value);
 }
@@ -85,6 +89,14 @@ function pinUnpinMiniplayer() {
         @click="closeMiniplayer"
       >
         <span class="icon material-symbols-outlined">pip_exit</span>
+      </button>
+      <button
+        class="window-close"
+        title="Close YTMDesktop (or hide to tray when enabled)"
+        aria-label="Close YTMDesktop"
+        @click="closeLikeMainWindow"
+      >
+        <span class="icon material-symbols-outlined">close</span>
       </button>
     </div>
   </div>
