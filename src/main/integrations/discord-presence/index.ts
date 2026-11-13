@@ -86,9 +86,9 @@ export default class DiscordPresence extends Integration {
   }
 
   private isPauseCountdownActive(): boolean {
-    // Buffering, Unknown and metadata updates cannot restart a countdown.
-    // Only actual playback resumes end the existing pause.
-    return this.pauseStartedAt !== null && this.videoState !== VideoState.Playing;
+    // A transient Playing event does not prove that playback actually resumed.
+    // Preserve the original deadline until progress genuinely advances.
+    return this.pauseStartedAt !== null;
   }
 
   private stopPauseProgressRefresh(): void {
@@ -98,6 +98,9 @@ export default class DiscordPresence extends Integration {
 
   private schedulePauseProgressRefresh(): void {
     this.stopPauseProgressRefresh();
+    // Never schedule another frozen-position update after the deadline,
+    // even if the independent timeout callback was delayed.
+    if (this.isPauseCountdownActive()) this.schedulePauseClear();
     if (
       !this.ready ||
       this.pauseExpired ||
@@ -185,6 +188,9 @@ export default class DiscordPresence extends Integration {
   }
 
   private updateActivity() {
+    // Enforce the absolute pause deadline before *any* RPC publication.
+    // A late timer callback must not allow another 5s+1s refresh cycle.
+    if (this.isPauseCountdownActive()) this.schedulePauseClear();
     if (!this.ready || this.pauseExpired || !this.videoDetails || this.activityDebounceTimeout) return;
     this.activityDebounceTimeout = setTimeout(() => {
       this.activityDebounceTimeout = undefined;
@@ -222,8 +228,8 @@ export default class DiscordPresence extends Integration {
         state: stringLimit(stateText, 128, 2),
         state_url: combinedStatus ? undefined : `https://music.youtube.com/channel/${channelId}`,
         timestamps: {
-          start: this.videoState === VideoState.Playing ? now - this.progress * 1000 : frozenTimeline ? now - pausedPosition * 1000 : undefined,
-          end: this.videoState === VideoState.Playing ? now + (durationSeconds - this.progress) * 1000 : frozenTimeline ? now + (durationSeconds - pausedPosition) * 1000 : undefined
+          start: !this.isPauseCountdownActive() && this.videoState === VideoState.Playing ? now - this.progress * 1000 : frozenTimeline ? now - pausedPosition * 1000 : undefined,
+          end: !this.isPauseCountdownActive() && this.videoState === VideoState.Playing ? now + (durationSeconds - this.progress) * 1000 : frozenTimeline ? now + (durationSeconds - pausedPosition) * 1000 : undefined
         },
         assets: {
           large_image: (thumbnail?.length ?? 0) <= 256 ? thumbnail : "ytmd-logo",
@@ -251,8 +257,19 @@ export default class DiscordPresence extends Integration {
     this.progress = Number.isFinite(videoProgress) ? Math.floor(videoProgress) : 0;
 
     let pausedPositionChanged = false;
-    if (trackState === VideoState.Playing) {
-      // A genuine resume is the only event that resets the pause deadline.
+    // YouTube Music may briefly report Playing during loading/recovery
+    // without actually advancing the audio. Reset the pause deadline only
+    // after two Playing observations on the same track with forward progress.
+    const playbackActuallyResumed =
+      trackState === VideoState.Playing &&
+      oldState === VideoState.Playing &&
+      videoDetails !== null &&
+      oldId === videoDetails.id &&
+      this.progress > oldProgress;
+    if (trackState === VideoState.Playing && (this.pauseStartedAt === null || playbackActuallyResumed)) {
+      if (this.pauseStartedAt !== null) {
+        log.info("Discord presence: playback progress confirmed; resetting pause deadline");
+      }
       clearTimeout(this.pauseTimeout);
       this.pauseTimeout = undefined;
       this.stopPauseProgressRefresh();
@@ -279,7 +296,7 @@ export default class DiscordPresence extends Integration {
           pausedPositionChanged = true;
         }
       }
-      // Preserve an existing pause through Buffering and Unknown states.
+      // Buffering, Unknown and unconfirmed Playing keep the original time.
       if (this.isPauseCountdownActive()) this.schedulePauseClear();
     }
 
