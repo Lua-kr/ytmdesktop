@@ -294,7 +294,7 @@ export default class DiscordPresence extends Integration {
 
     if (
       hasFullMetadata &&
-      (oldState !== this.videoState || oldId !== this.videoDetails.id || Math.abs(this.progress - oldProgress) > 1 || oldProgress > this.progress || pausedPositionChanged)
+      (oldState !== this.videoState || oldId !== videoDetails.id || Math.abs(this.progress - oldProgress) > 1 || oldProgress > this.progress || pausedPositionChanged)
     ) {
       this.updateActivity();
     }
