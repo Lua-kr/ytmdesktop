@@ -66,6 +66,8 @@ export default class DiscordPresence extends Integration {
   private pauseProgressRefreshTimeout: NodeJS.Timeout | undefined = undefined;
   private pauseClearRetryTimer: NodeJS.Timeout | undefined = undefined;
   private pauseClearAcknowledged = false;
+  private resumeVerificationTimeout: NodeJS.Timeout | undefined = undefined;
+  private resumeVerificationTrackId: string | null = null;
   private connectionRetryTimeout: NodeJS.Timeout | string | number | undefined = undefined;
   private stateCallback: ((event: PlayerState) => void) | null = null;
 
@@ -129,6 +131,53 @@ export default class DiscordPresence extends Integration {
   private stopPauseClearRetry(): void {
     clearInterval(this.pauseClearRetryTimer);
     this.pauseClearRetryTimer = undefined;
+  }
+
+  private cancelResumeVerification(): void {
+    clearTimeout(this.resumeVerificationTimeout);
+    this.resumeVerificationTimeout = undefined;
+    this.resumeVerificationTrackId = null;
+  }
+
+  private confirmPlaybackResumed(reason: "progress" | "stable-state"): void {
+    const wasPaused = this.pauseStartedAt !== null;
+    this.cancelResumeVerification();
+    clearTimeout(this.pauseTimeout);
+    this.pauseTimeout = undefined;
+    this.stopPauseProgressRefresh();
+    this.pauseStartedAt = null;
+    this.pauseExpired = false;
+    this.pauseClearAcknowledged = false;
+    this.stopPauseClearRetry();
+    this.pausedPlaybackPosition = null;
+    if (wasPaused) log.info(`Discord presence: playback resumed (${reason}); restoring activity`);
+  }
+
+  private scheduleResumeVerification(trackId: string | null): void {
+    if (this.resumeVerificationTimeout !== undefined && this.resumeVerificationTrackId === trackId) return;
+    this.cancelResumeVerification();
+    if (!this.isEnabled || this.pauseStartedAt === null || !trackId) return;
+
+    // The first Playing notification can be transient. Verify the live
+    // PlayerStateStore after a brief delay instead of waiting indefinitely
+    // for another progress/state event to trigger an activity update.
+    this.resumeVerificationTrackId = trackId;
+    this.resumeVerificationTimeout = setTimeout(() => {
+      this.resumeVerificationTimeout = undefined;
+      this.resumeVerificationTrackId = null;
+      if (!this.isEnabled || this.pauseStartedAt === null) return;
+
+      const latest = this.getService(PlayerStateStore).getState();
+      if (latest.trackState !== VideoState.Playing || latest.videoDetails?.id !== trackId) return;
+
+      this.videoState = latest.trackState;
+      this.videoDetails = latest.videoDetails;
+      this.progress = Number.isFinite(latest.videoProgress) ? Math.floor(latest.videoProgress) : 0;
+      this.confirmPlaybackResumed("stable-state");
+      // Do not rely on another PlayerStateStore event: there may not be one
+      // until the user clicks pause/play again.
+      if (this.ready && latest.hasFullMetadata) this.updateActivity();
+    }, 1_200);
   }
 
   private requestPauseClear(): void {
@@ -257,28 +306,27 @@ export default class DiscordPresence extends Integration {
     this.progress = Number.isFinite(videoProgress) ? Math.floor(videoProgress) : 0;
 
     let pausedPositionChanged = false;
-    // YouTube Music may briefly report Playing during loading/recovery
-    // without actually advancing the audio. Reset the pause deadline only
-    // after two Playing observations on the same track with forward progress.
-    const playbackActuallyResumed =
-      trackState === VideoState.Playing &&
-      oldState === VideoState.Playing &&
-      videoDetails !== null &&
-      oldId === videoDetails.id &&
-      this.progress > oldProgress;
-    if (trackState === VideoState.Playing && (this.pauseStartedAt === null || playbackActuallyResumed)) {
+    let playbackActuallyResumed = false;
+    if (trackState === VideoState.Playing) {
       if (this.pauseStartedAt !== null) {
-        log.info("Discord presence: playback progress confirmed; resetting pause deadline");
+        // Forward progress on consecutive Playing events confirms immediately.
+        // Otherwise confirm sustained Playing after 1.2s (even if no new
+        // progress event arrives, as happens on some playback resumes).
+        const progressConfirmed =
+          oldState === VideoState.Playing &&
+          videoDetails !== null &&
+          oldId === videoDetails.id &&
+          this.progress > oldProgress;
+        if (progressConfirmed) {
+          this.confirmPlaybackResumed("progress");
+          playbackActuallyResumed = true;
+        } else {
+          this.scheduleResumeVerification(videoDetails?.id ?? null);
+          this.schedulePauseClear();
+        }
       }
-      clearTimeout(this.pauseTimeout);
-      this.pauseTimeout = undefined;
-      this.stopPauseProgressRefresh();
-      this.pauseStartedAt = null;
-      this.pauseExpired = false;
-      this.pauseClearAcknowledged = false;
-      this.stopPauseClearRetry();
-      this.pausedPlaybackPosition = null;
     } else {
+      this.cancelResumeVerification();
       if (trackState === VideoState.Paused) {
         if (this.pauseStartedAt === null) {
           this.pauseStartedAt = Date.now();
@@ -296,7 +344,7 @@ export default class DiscordPresence extends Integration {
           pausedPositionChanged = true;
         }
       }
-      // Buffering, Unknown and unconfirmed Playing keep the original time.
+      // Buffering and Unknown do not restart an established pause deadline.
       if (this.isPauseCountdownActive()) this.schedulePauseClear();
     }
 
@@ -311,7 +359,7 @@ export default class DiscordPresence extends Integration {
 
     if (
       hasFullMetadata &&
-      (oldState !== this.videoState || oldId !== videoDetails.id || Math.abs(this.progress - oldProgress) > 1 || oldProgress > this.progress || pausedPositionChanged)
+      (oldState !== this.videoState || oldId !== videoDetails.id || Math.abs(this.progress - oldProgress) > 1 || oldProgress > this.progress || pausedPositionChanged || playbackActuallyResumed)
     ) {
       this.updateActivity();
     }
@@ -405,6 +453,7 @@ export default class DiscordPresence extends Integration {
     clearTimeout(this.connectionRetryTimeout);
     this.stopPauseProgressRefresh();
     this.stopPauseClearRetry();
+    this.cancelResumeVerification();
     this.activityDebounceTimeout = this.pauseTimeout = this.connectionRetryTimeout = undefined;
     this.pauseClearAcknowledged = false;
     this.pauseStartedAt = null;
