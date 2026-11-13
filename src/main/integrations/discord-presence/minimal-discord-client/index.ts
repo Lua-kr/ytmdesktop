@@ -37,6 +37,7 @@ export default class DiscordClient extends EventEmitter {
   private connectionPromise: Promise<void> | null = null;
   private ipcClient = new IPCClient();
   private connected = false;
+  private pendingClearNonce: string | null = null;
 
   constructor(clientId: string) {
     super();
@@ -75,31 +76,36 @@ export default class DiscordClient extends EventEmitter {
           });
 
           this.connected = true;
-          this.ipcClient.send(
-            {
-              v: 1,
-              client_id: this.clientId
-            },
-            OPCode.HANDSHAKE
-          );
-          this.emit("connect");
-
+          this.pendingClearNonce = null;
           this.ipcClient.on("close", () => {
             this.connected = false;
+            this.pendingClearNonce = null;
             this.emit("close");
           });
-          this.ipcClient.on("data", (op: OPCode, json: unknown) => {
-            switch (op) {
-              case OPCode.PING: {
-                this.ipcClient.send(json, OPCode.PONG);
-                break;
-              }
-
-              default: {
-                break;
-              }
+          // IPCClient emits ONE { op, json } object, not two arguments.
+          this.ipcClient.on("data", ({ op, json }: { op: OPCode; json: unknown }) => {
+            if (op === OPCode.PING) {
+              this.ipcClient.send(json, OPCode.PONG);
+              return;
+            }
+            if (op !== OPCode.FRAME || !json || typeof json !== "object") return;
+            const frame = json as { cmd?: string; nonce?: string; evt?: string; data?: unknown };
+            if (frame.cmd !== "SET_ACTIVITY" || !frame.nonce || frame.nonce !== this.pendingClearNonce) return;
+            this.pendingClearNonce = null;
+            if (frame.evt === "ERROR") {
+              this.emit("activity-clear-error", frame.data);
+            } else {
+              this.emit("activity-cleared");
             }
           });
+
+          if (!this.ipcClient.send(
+            { v: 1, client_id: this.clientId },
+            OPCode.HANDSHAKE
+          )) {
+            throw new Error("Failed to send Discord IPC handshake");
+          }
+          this.emit("connect");
 
           this.connectionPromise = null;
           resolve();
@@ -128,12 +134,15 @@ export default class DiscordClient extends EventEmitter {
 
   public destroy() {
     this.connected = false;
+    this.pendingClearNonce = null;
     this.removeAllListeners();
     this.ipcClient.destroy();
   }
 
-  public setActivity(activity: DiscordActivity) {
-    this.ipcClient.send({
+  public setActivity(activity: DiscordActivity): boolean {
+    if (!this.connected) return false;
+    this.pendingClearNonce = null;
+    return this.ipcClient.send({
       cmd: "SET_ACTIVITY",
       args: {
         pid: process.pid,
@@ -143,13 +152,20 @@ export default class DiscordClient extends EventEmitter {
     });
   }
 
-  public clearActivity() {
-    this.ipcClient.send({
+  public clearActivity(): boolean {
+    if (!this.connected) return false;
+    const nonce = randomUUID();
+    this.pendingClearNonce = nonce;
+    // Explicit null is the portable Discord RPC form for clearing an activity.
+    const sent = this.ipcClient.send({
       cmd: "SET_ACTIVITY",
       args: {
-        pid: process.pid
+        pid: process.pid,
+        activity: null
       },
-      nonce: randomUUID()
+      nonce
     });
+    if (!sent) this.pendingClearNonce = null;
+    return sent;
   }
 }

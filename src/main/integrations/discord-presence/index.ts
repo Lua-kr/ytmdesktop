@@ -64,6 +64,8 @@ export default class DiscordPresence extends Integration {
   private pauseExpired = false;
   private pausedPlaybackPosition: number | null = null;
   private pauseProgressRefreshTimeout: NodeJS.Timeout | undefined = undefined;
+  private pauseClearRetryTimer: NodeJS.Timeout | undefined = undefined;
+  private pauseClearAcknowledged = false;
   private connectionRetryTimeout: NodeJS.Timeout | string | number | undefined = undefined;
   private stateCallback: ((event: PlayerState) => void) | null = null;
 
@@ -121,6 +123,30 @@ export default class DiscordPresence extends Integration {
     }, 5_000);
   }
 
+  private stopPauseClearRetry(): void {
+    clearInterval(this.pauseClearRetryTimer);
+    this.pauseClearRetryTimer = undefined;
+  }
+
+  private requestPauseClear(): void {
+    if (!this.isEnabled || !this.ready || !this.pauseExpired || this.pauseClearAcknowledged) return;
+    const sent = this.discordClient?.clearActivity() ?? false;
+    log.info(`Discord presence: sending activity clear (transport queued: ${sent})`);
+
+    // The transport write alone does not prove Discord has applied it.
+    // Retry until a matching SET_ACTIVITY reply confirms the clear. 15s
+    // leaves ample headroom under Discord's local RPC rate limit.
+    if (this.pauseClearRetryTimer === undefined) {
+      this.pauseClearRetryTimer = setInterval(() => {
+        if (!this.isEnabled || !this.pauseExpired || this.pauseClearAcknowledged) {
+          this.stopPauseClearRetry();
+          return;
+        }
+        if (this.ready) this.requestPauseClear();
+      }, 15_000);
+    }
+  }
+
   private schedulePauseClear(): void {
     if (!this.isEnabled || !this.isPauseCountdownActive()) return;
 
@@ -135,8 +161,9 @@ export default class DiscordPresence extends Integration {
         this.stopPauseProgressRefresh();
         clearTimeout(this.activityDebounceTimeout);
         this.activityDebounceTimeout = undefined;
-        log.info("Discord presence: pause timeout elapsed; clearing activity");
-        if (this.ready) this.discordClient?.clearActivity();
+        log.info("Discord presence: pause timeout elapsed; requesting activity clear");
+        this.pauseClearAcknowledged = false;
+        this.requestPauseClear();
       }
       return;
     }
@@ -144,6 +171,8 @@ export default class DiscordPresence extends Integration {
     if (this.pauseExpired) {
       // Extending the pause setting can restore previously expired activity.
       this.pauseExpired = false;
+      this.pauseClearAcknowledged = false;
+      this.stopPauseClearRetry();
       if (this.ready) this.updateActivity();
     }
 
@@ -229,12 +258,16 @@ export default class DiscordPresence extends Integration {
       this.stopPauseProgressRefresh();
       this.pauseStartedAt = null;
       this.pauseExpired = false;
+      this.pauseClearAcknowledged = false;
+      this.stopPauseClearRetry();
       this.pausedPlaybackPosition = null;
     } else {
       if (trackState === VideoState.Paused) {
         if (this.pauseStartedAt === null) {
           this.pauseStartedAt = Date.now();
           this.pauseExpired = false;
+          this.pauseClearAcknowledged = false;
+          this.stopPauseClearRetry();
           this.pausedPlaybackPosition = this.progress;
           log.info(`Discord presence: paused; clearing after ${this.getPauseTimeoutMs() / 1000}s`);
         } else if (
@@ -305,19 +338,31 @@ export default class DiscordPresence extends Integration {
     if (this.discordClient) return;
     this.discordClient = new DiscordClient(DISCORD_CLIENT_ID);
 
+    this.discordClient.on("activity-cleared", () => {
+      if (!this.pauseExpired) return;
+      this.pauseClearAcknowledged = true;
+      this.stopPauseClearRetry();
+      log.info("Discord presence: activity clear acknowledged by Discord RPC");
+    });
+    this.discordClient.on("activity-clear-error", error => {
+      log.warn("Discord presence: activity clear rejected by Discord RPC", error);
+    });
+
     this.discordClient.on("connect", () => {
       this.ready = true;
+      this.pauseClearAcknowledged = false;
       this.connectionRetries = 0;
       const memoryStore = this.getService(MemoryStore<MemoryStoreSchema>);
       memoryStore.set("discordPresenceConnectionFailed", false);
       // Expired pauses must stay cleared even after Discord reconnects.
       this.playerStateChanged(this.getService(PlayerStateStore).getState());
-      if (this.pauseExpired) this.discordClient?.clearActivity();
+      if (this.pauseExpired) this.requestPauseClear();
       else if (this.videoDetails) this.updateActivity();
     });
     this.discordClient.on("close", () => {
       log.info("Discord connection closed");
       this.ready = false;
+      this.pauseClearAcknowledged = false;
       // Do not stop the independent pause deadline during an IPC outage.
       this.stopPauseProgressRefresh();
       clearTimeout(this.activityDebounceTimeout);
@@ -342,7 +387,9 @@ export default class DiscordPresence extends Integration {
     clearTimeout(this.pauseTimeout);
     clearTimeout(this.connectionRetryTimeout);
     this.stopPauseProgressRefresh();
+    this.stopPauseClearRetry();
     this.activityDebounceTimeout = this.pauseTimeout = this.connectionRetryTimeout = undefined;
+    this.pauseClearAcknowledged = false;
     this.pauseStartedAt = null;
     this.pauseExpired = false;
     this.pausedPlaybackPosition = null;
@@ -356,7 +403,13 @@ export default class DiscordPresence extends Integration {
 
     if (!this.discordClient) return;
     this.ready = false;
-    this.discordClient.destroy();
+    const client = this.discordClient;
     this.discordClient = null;
+    // Clear the activity before shutting down the socket instead of relying
+    // solely on Discord noticing the process disconnect.
+    client.clearActivity();
+    client.close();
+    const destroyTimer = setTimeout(() => client.destroy(), 250);
+    destroyTimer.unref();
   }
 }

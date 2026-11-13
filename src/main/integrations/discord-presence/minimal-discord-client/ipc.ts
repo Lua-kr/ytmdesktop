@@ -11,6 +11,7 @@ export enum OPCode {
 
 export default class IPCClient extends EventEmitter {
   private socket!: Socket;
+  private receiveBuffer = Buffer.alloc(0);
 
   constructor() {
     super();
@@ -19,6 +20,7 @@ export default class IPCClient extends EventEmitter {
   }
 
   private createSocket() {
+    this.receiveBuffer = Buffer.alloc(0);
     this.socket = new Socket();
     this.socket.on("connect", () => {
       this.emit("connect");
@@ -29,18 +31,27 @@ export default class IPCClient extends EventEmitter {
     this.socket.on("error", error => {
       this.emit("error", error);
     });
-    this.socket.on("data", (buffer: Buffer) => {
-      try {
-        const op = buffer.readInt32LE(0);
-        const length = buffer.readInt32LE(4);
-        const json = JSON.parse(buffer.toString("utf-8", 8, 8 + length));
-
-        this.emit("data", {
-          op,
-          json
-        });
-      } catch {
-        /* invalid json provided, ignore */
+    this.socket.on("data", (chunk: Buffer) => {
+      // Node sockets may split a frame or concatenate multiple frames.
+      // Parsing one data event as one frame loses Discord RPC responses.
+      this.receiveBuffer = Buffer.concat([this.receiveBuffer, chunk]);
+      while (this.receiveBuffer.length >= 8) {
+        const op = this.receiveBuffer.readInt32LE(0);
+        const length = this.receiveBuffer.readInt32LE(4);
+        if (length < 0 || length > 8 * 1024 * 1024) {
+          this.receiveBuffer = Buffer.alloc(0);
+          this.socket.destroy();
+          return;
+        }
+        if (this.receiveBuffer.length < 8 + length) return;
+        const payload = this.receiveBuffer.subarray(8, 8 + length);
+        this.receiveBuffer = this.receiveBuffer.subarray(8 + length);
+        try {
+          const json = JSON.parse(payload.toString("utf-8"));
+          this.emit("data", { op, json });
+        } catch {
+          // Ignore malformed frames without losing subsequent valid frames.
+        }
       }
     });
   }
@@ -52,7 +63,10 @@ export default class IPCClient extends EventEmitter {
     this.socket.connect(ipcPath);
   }
 
-  public send(data: unknown, op = OPCode.FRAME) {
+  public send(data: unknown, op = OPCode.FRAME): boolean {
+    // Do not silently discard an activity-clear request or recreate a
+    // disconnected socket without completing another handshake.
+    if (this.socket.destroyed || !this.socket.writable) return false;
     const json = JSON.stringify(data);
     const length = Buffer.byteLength(json);
     const buffer = Buffer.alloc(8 + length);
@@ -60,16 +74,16 @@ export default class IPCClient extends EventEmitter {
     buffer.writeInt32LE(length, 4);
     buffer.write(json, 8, length);
 
-    if (!this.socket.closed && this.socket.writable) {
+    try {
       this.socket.write(buffer);
-    } else {
-      this.socket.end();
-      this.createSocket();
+      return true; // A write is queued; RPC acknowledgment is tracked separately.
+    } catch {
+      return false;
     }
   }
 
   public close() {
-    if (!this.socket.closed) {
+    if (!this.socket.destroyed) {
       this.send({}, OPCode.CLOSE);
       this.socket.end();
     }
